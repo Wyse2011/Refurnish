@@ -1,0 +1,49 @@
+name: Build and Release
+
+# Run manually from the Actions tab: Actions > Build and Release > Run workflow.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Download Dalamud
+        shell: pwsh
+        run: |
+          $dalamud = "$env:APPDATA\XIVLauncher\addon\Hooks\dev"
+          New-Item -ItemType Directory -Force -Path $dalamud | Out-Null
+          Invoke-WebRequest -Uri "https://goatcorp.github.io/dalamud-distrib/latest.zip" -OutFile dalamud.zip
+          Expand-Archive -Path dalamud.zip -DestinationPath $dalamud -Force
+          "DALAMUD_HOME=$dalamud\" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Read version from Refurnish.csproj
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$proj = Get-Content Refurnish/Refurnish.csproj
+          $v = ($proj.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build
+        run: dotnet build Refurnish/Refurnish.csproj -c Release
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Refurnish v${{ steps.version.outputs.version }}
+          files: Refurnish/bin/**/latest.zip
+          fail_on_unmatched_files: true
+          make_latest: true

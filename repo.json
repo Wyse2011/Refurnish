@@ -1,0 +1,19 @@
+[
+  {
+    "Author": "Wyse2011",
+    "Name": "Refurnish",
+    "InternalName": "Refurnish",
+    "AssemblyVersion": "0.1.0.0",
+    "Punchline": "Plan housing layout swaps from MakePlace files.",
+    "Description": "Load a MakePlace layout and see exactly which furnishings to keep, which to store, and which to pull from your inventory, retainers, house storerooms and FC chest.",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://github.com/Wyse2011/Refurnish",
+    "Tags": ["housing", "makeplace", "furniture", "inventory"],
+    "DalamudApiLevel": 15,
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "DownloadLinkInstall": "https://github.com/Wyse2011/Refurnish/releases/latest/download/latest.zip",
+    "DownloadLinkTesting": "https://github.com/Wyse2011/Refurnish/releases/latest/download/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/Wyse2011/Refurnish/releases/latest/download/latest.zip"
+  }
+]
