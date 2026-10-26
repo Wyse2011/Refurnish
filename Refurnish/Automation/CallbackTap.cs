@@ -124,9 +124,22 @@ public sealed unsafe class CallbackTap : IDisposable
             var v = a->AtkValues[i];
             var t = (int)v.Type & 0xF;
             if (t is 8 or 10 && v.String.Value != null)
-                list.Add(Marshal.PtrToStringUTF8((nint)v.String.Value) ?? string.Empty);
+                list.Add(Text(v.String.Value));
         }
         return list;
+    }
+
+    /// <summary>Game text without its formatting codes (icons, colours), so it reads as plain words.</summary>
+    private static string Text(byte* ptr)
+    {
+        try
+        {
+            return Dalamud.Game.Text.SeStringHandling.SeString.Parse(ptr).TextValue.Trim();
+        }
+        catch
+        {
+            return Marshal.PtrToStringUTF8((nint)ptr) ?? string.Empty;
+        }
     }
 
     public static List<string>? OpenMenuStrings()

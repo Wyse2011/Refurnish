@@ -269,7 +269,7 @@ public sealed class UiPlacer
         if (mode == UiPlaceMode.Test)
         {
             Log($"Test: list entry {index + 1} is {name} (storeroom {selected.Container}/{selected.Slot}). "
-                + (menu.SequenceEqual(profile.MenuStrings) ? "Menu matches what was learned." : $"Menu differs: {string.Join(" | ", menu)}")
+                + (profile.MenuChoiceMatches(menu, out var entry) ? $"The entry to choose reads \"{entry}\", as learned." : $"The entry to choose reads \"{entry}\" instead of \"{profile.PlaceEntryText}\".")
                 + " Putting it back.");
             CloseMenu(profile, finishAfter: true);
             return;
@@ -287,10 +287,10 @@ public sealed class UiPlacer
             return;
         }
 
-        if (!menu.SequenceEqual(profile.MenuStrings))
+        if (!profile.MenuChoiceMatches(menu, out var found))
         {
-            Fail(key, $"{name}: its menu doesn't match what was learned ({string.Join(" | ", menu)}), so Place wasn't chosen.");
-            CloseAndNext(profile);
+            Fail(key, $"{name}: the menu entry to choose reads \"{found}\" instead of \"{profile.PlaceEntryText}\", so it wasn't chosen.");
+            if (step != Step.Idle) CloseAndNext(profile);
             return;
         }
 

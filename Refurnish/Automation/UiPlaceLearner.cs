@@ -207,7 +207,7 @@ public sealed class UiPlaceLearner
         Unhook();
         Active = false;
         LastSucceeded = true;
-        Status = $"Learned. Menu entries: {string.Join(" | ", place.MenuStrings)}";
+        Status = $"Learned. Refurnish will choose the menu entry \"{plugin.Configuration.UiPlace!.PlaceEntryText}\".";
     }
 
     /// <summary>Picking an item in the furnishing list: two numbers, the first is 1 ("select").</summary>
