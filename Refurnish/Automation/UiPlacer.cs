@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.Text.SeStringHandling;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using Lumina.Excel.Sheets;
 using Refurnish.Inventory;
 using Refurnish.Planning;
@@ -40,6 +43,8 @@ public sealed class UiPlacer
     private static readonly TimeSpan FlagGrace = TimeSpan.FromSeconds(5);
     private const int Passes = 2;
     private const int MaxFailuresInARow = 10;
+    private static readonly TimeSpan Countdown = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan DiagnosticDelay = TimeSpan.FromSeconds(0.4);
 
     private readonly Plugin plugin;
     private readonly List<string> log = new();
@@ -61,6 +66,10 @@ public sealed class UiPlacer
     private int placedCountBefore;
     private bool finishAfterClose;
     private int failuresInARow;
+    private string? gameError;          // set when the game shows an error message while placing
+    private string? previousGameError;  // the error from the last failed item
+    private bool diagnosticLogged;
+    private bool toastHooked;
 
     public bool Running => step != Step.Idle;
     public int Pass { get; private set; } = 1;
@@ -68,6 +77,10 @@ public sealed class UiPlacer
     public int FinalFailures { get; private set; }
     public string? StopReason { get; private set; }
     public string? Summary { get; private set; }
+
+    /// <summary>Seconds left before the first click, so you can aim the mouse at open floor.</summary>
+    public double CountdownLeft => step == Step.Ready && Placed == 0 && index == 0 && Pass == 1
+        ? Math.Max(0, (nextAllowedUtc - DateTime.UtcNow).TotalSeconds) : 0;
 
     public UiPlacer(Plugin plugin) => this.plugin = plugin;
 
@@ -109,14 +122,33 @@ public sealed class UiPlacer
         flagsOddSinceUtc = null;
         emptySinceUtc = null;
         baselineFlags = Plugin.Condition.AsReadOnlySet().ToHashSet();
-        nextAllowedUtc = DateTime.UtcNow;
+        gameError = null;
+        previousGameError = null;
+        nextAllowedUtc = DateTime.UtcNow + (placeMode == UiPlaceMode.Test ? TimeSpan.Zero : Countdown);
         step = Step.Ready;
+        if (!toastHooked)
+        {
+            Plugin.ToastGui.ErrorToast += OnErrorToast;
+            toastHooked = true;
+        }
         Log(mode switch
         {
             UiPlaceMode.Test => "Test started: picking up the first storeroom item and putting it back.",
-            UiPlaceMode.One => "Placing one item.",
-            _ => "Placing all needed storeroom items.",
+            UiPlaceMode.One => "Placing one item. Move your mouse over open floor now; starting in 3 seconds.",
+            _ => "Placing all needed storeroom items. Move your mouse over open floor and leave it there; starting in 3 seconds.",
         });
+    }
+
+    private void OnErrorToast(ref SeString message, ref bool isHandled)
+    {
+        if (step == Step.WaitPlaced) gameError = message.TextValue;
+    }
+
+    private void Unhook()
+    {
+        if (!toastHooked) return;
+        Plugin.ToastGui.ErrorToast -= OnErrorToast;
+        toastHooked = false;
     }
 
     public void Stop(string reason)
@@ -127,6 +159,7 @@ public sealed class UiPlacer
         if (profile != null && CallbackTap.IsVisible(profile.MenuAddon))
             CallbackTap.Fire(profile.MenuAddon, profile.CancelValues, profile.CancelClose);
         step = Step.Idle;
+        Unhook();
         StopReason = reason;
         Log($"Stopped: {reason}");
     }
@@ -237,6 +270,8 @@ public sealed class UiPlacer
         }
 
         placedCountBefore = LiveInventory.CountItem(LiveInventory.InteriorPlaced, selectedItem);
+        gameError = null;
+        diagnosticLogged = false;
         if (!CallbackTap.Fire(profile.MenuAddon, profile.PlaceValues, profile.PlaceClose))
         {
             Stop("Couldn't click Place in the menu.");
@@ -252,10 +287,17 @@ public sealed class UiPlacer
                          && id == selectedItem && stain == selectedStain;
         var placed = LiveInventory.CountItem(LiveInventory.InteriorPlaced, selectedItem) > placedCountBefore;
 
+        if (!diagnosticLogged && DateTime.UtcNow - stepStartedUtc > DiagnosticDelay)
+        {
+            diagnosticLogged = true;
+            Log(DescribeAim());
+        }
+
         if (!stillThere && placed)
         {
             Placed++;
             failuresInARow = 0;
+            previousGameError = null;
             Log($"Placed {ItemName(selectedItem)}.");
             if (mode == UiPlaceMode.One) { Finish(); return; }
             // The list shifts up after an item leaves, so the same position now holds the next item.
@@ -264,10 +306,30 @@ public sealed class UiPlacer
             return;
         }
 
-        if (DateTime.UtcNow - stepStartedUtc <= PlaceTimeout) return;
+        // The game said no (for example "Unable to place item."): no need to wait the full timeout.
+        var refused = gameError != null && DateTime.UtcNow - stepStartedUtc > TimeSpan.FromSeconds(0.5);
+        if (!refused && DateTime.UtcNow - stepStartedUtc <= PlaceTimeout) return;
 
-        Fail(selected, $"{ItemName(selectedItem)}: the game didn't place it.");
+        if (!diagnosticLogged) { diagnosticLogged = true; Log(DescribeAim()); }
+        var reason = gameError != null ? $"the game said \"{gameError}\"" : "the game didn't place it";
+        Fail(selected, $"{ItemName(selectedItem)}: {reason}.");
         if (step == Step.Idle) return;
+
+        // The same refusal twice in a row means it's the spot, not the item.
+        if (gameError != null && gameError == previousGameError)
+        {
+            Stop($"The game refused twice in a row (\"{gameError}\"). This usually means your mouse isn't pointing at open floor. "
+                 + "Aim it at an open spot, then try again.");
+            return;
+        }
+        previousGameError = gameError;
+
+        if (mode == UiPlaceMode.One)
+        {
+            if (CallbackTap.IsVisible(profile.MenuAddon)) CloseMenu(profile, finishAfter: true);
+            else Finish();
+            return;
+        }
         if (CallbackTap.IsVisible(profile.MenuAddon)) CloseAndNext(profile);
         else { index++; step = Step.Ready; nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1); }
     }
@@ -335,10 +397,30 @@ public sealed class UiPlacer
     private void Finish()
     {
         step = Step.Idle;
+        Unhook();
         Summary = mode == UiPlaceMode.Test
             ? "Test finished."
             : FinalFailures > 0 ? $"Done. Placed {Placed}; {FinalFailures} couldn't be placed (see the log)." : $"Done. Placed {Placed}.";
         Log(Summary);
+    }
+
+    /// <summary>Where the game tried to put the item, where you are, and where the mouse is aiming.</summary>
+    private static unsafe string DescribeAim()
+    {
+        var sb = new System.Text.StringBuilder("  Spot check: ");
+        var hm = HousingManager.Instance();
+        if (hm != null && hm->IndoorTerritory != null)
+        {
+            var p = hm->IndoorTerritory->StoreroomItemPlacePosition;
+            sb.Append($"game's placement spot ({p.X:0.00}, {p.Y:0.00}, {p.Z:0.00})");
+        }
+        var me = Plugin.ObjectTable.LocalPlayer;
+        if (me != null) sb.Append($", you at ({me.Position.X:0.00}, {me.Position.Y:0.00}, {me.Position.Z:0.00})");
+        if (Plugin.GameGui.ScreenToWorld(ImGui.GetMousePos(), out var aim))
+            sb.Append($", mouse aiming at ({aim.X:0.00}, {aim.Y:0.00}, {aim.Z:0.00})");
+        else
+            sb.Append(", mouse not aiming at anything in the room");
+        return sb.ToString();
     }
 
     private void Log(string line)

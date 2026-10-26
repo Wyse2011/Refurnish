@@ -263,7 +263,11 @@ public sealed partial class MainWindow
         // ---- Run ----
         if (placer.Running)
         {
-            ImGui.TextColored(Warn, $"Working... placed {placer.Placed} so far{(placer.Pass > 1 ? " (second pass over missed items)" : "")}.");
+            var countdown = placer.CountdownLeft;
+            if (countdown > 0)
+                ImGui.TextColored(Warn, $"Move your mouse over open floor and leave it there. Starting in {Math.Ceiling(countdown)}...");
+            else
+                ImGui.TextColored(Warn, $"Working... placed {placer.Placed} so far{(placer.Pass > 1 ? " (second pass over missed items)" : "")}.");
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
             if (ImGui.Button("STOP##ui", new Vector2(-1, 32))) placer.Stop("Stopped by you.");
             ImGui.PopStyleColor();
@@ -290,7 +294,9 @@ public sealed partial class MainWindow
 
             var problem = testProblem ?? placeProblem;
             if (problem != null) ImGui.TextColored(Warn, problem);
-            ImGui.TextDisabled("Stand in open floor space, keep the furnishing window on its storeroom tab, and don't click in it while Refurnish works.");
+            ImGui.TextWrapped("The game places each item where your mouse is pointing, so after pressing Place, move your mouse over "
+                              + "open floor during the 3-second countdown and leave it there. Keep the furnishing window on its storeroom tab "
+                              + "and don't click in it while Refurnish works. To stop, type /refurnish stop.");
         }
 
         if (ImGui.BeginPopup("##confirmUiPlaceAll"))
