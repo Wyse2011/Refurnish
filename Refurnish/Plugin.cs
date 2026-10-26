@@ -53,7 +53,7 @@ public sealed class Plugin : IDalamudPlugin
         Learner = new StoreLearner(this);
         Executor = new StoreExecutor(this);
         Packets = new PacketRecorder();
-        Packets.Enable();
+        if (PlaceExecutor.DirectPlacingEnabled) Packets.Enable(); // don't watch network traffic at all while placing is off
         PlaceLearner = new PlaceLearner(this);
         Placer = new PlaceExecutor(this);
         Framework.Update += OnFrameworkUpdate;

@@ -41,6 +41,7 @@ public sealed class PlaceLearner
 
     public bool Start()
     {
+        if (!PlaceExecutor.DirectPlacingEnabled) { Fail("Placing is switched off in this version."); return false; }
         if (plugin.Packets.SetupError != null) { Fail(plugin.Packets.SetupError); return false; }
         if (plugin.Executor.Running || plugin.Placer.Running || plugin.Learner.Active)
         {

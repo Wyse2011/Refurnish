@@ -29,6 +29,13 @@ public readonly record struct PlaceJob(ulong HouseId, int Container, int Slot, u
 /// </summary>
 public sealed class PlaceExecutor
 {
+    /// <summary>
+    /// Off: sending the placement message directly skips the game's own "holding an item" step,
+    /// which leaves the game client in a broken state (hidden UI, locked commands, crashes).
+    /// Placing needs to go through the game's own placement flow instead before this is re-enabled.
+    /// </summary>
+    public const bool DirectPlacingEnabled = false;
+
     public const int TriesPerPass = 1;
     public const int Passes = 2;
     private const int MaxFailedTriesInARow = 10;
@@ -82,6 +89,7 @@ public sealed class PlaceExecutor
 
     public void Enqueue(IEnumerable<PlaceJob> jobs)
     {
+        if (!DirectPlacingEnabled) return;
         if (!Running)
         {
             states.Clear();

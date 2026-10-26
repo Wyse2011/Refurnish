@@ -28,6 +28,21 @@ public sealed partial class MainWindow
         if (!ImGui.CollapsingHeader($"Place from storeroom / inventory ({rows.Count})###placeSection", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
+        if (!PlaceExecutor.DirectPlacingEnabled)
+        {
+            ImGui.TextColored(Warn, "Automatic placing is switched off in this version.");
+            ImGui.TextWrapped("Sending placements directly confused the game client (hidden UI, locked commands, crashes). "
+                              + "It's being rebuilt to go through the game's own placement steps. For now, these "
+                              + $"{rows.Count} items are ready to place by hand from the storeroom or your inventory; "
+                              + "anywhere is fine, then apply the layout with MakePlace.");
+            foreach (var g in rows.GroupBy(e => (e.ItemId, e.ActualStain)).OrderBy(g => ItemName(g.Key.ItemId)))
+            {
+                var dye = g.Key.ActualStain == 0 ? "" : $" ({stains!.Name(g.Key.ActualStain)})";
+                ImGui.BulletText($"{g.Count()}x {ItemName(g.Key.ItemId)}{dye}");
+            }
+            return;
+        }
+
         if (rows.Count == 0 && !placer.Running)
         {
             ImGui.TextDisabled("Nothing needed is in this room's storeroom or your inventory right now.");

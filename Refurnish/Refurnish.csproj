@@ -2,7 +2,7 @@
   <!-- Dalamud.NET.Sdk sets the target framework and references Dalamud, ImGui, Lumina and
        FFXIVClientStructs. Same setup as Inkwell. -->
   <PropertyGroup>
-    <Version>0.4.1.0</Version>
+    <Version>0.4.2.0</Version>
     <Description>Plan housing layout swaps from MakePlace files: what to store, what to pull, and from where.</Description>
     <PackageProjectUrl>https://github.com/Wyse2011/Refurnish</PackageProjectUrl>
     <IsPackable>false</IsPackable>

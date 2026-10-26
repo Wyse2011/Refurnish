@@ -80,6 +80,11 @@ Setup is tied to the house and to the game version, so it needs redoing after a 
 
 ## Placing furnishings from the storeroom or inventory
 
+> **Switched off in 0.4.2.** Sending placements directly skipped the game's own "holding an item"
+> step and left the game client broken (hidden UI, locked commands, crashes). It's being rebuilt
+> to go through the game's own placement flow. Until then, the Retrieve tab lists what to place
+> by hand. The description below is of the disabled feature.
+
 At the top of the **Retrieve** tab, everything the layout needs that's already in this room's
 storeroom or your inventory gets a **Place** button, plus **Place all selected** with a
 confirmation.
