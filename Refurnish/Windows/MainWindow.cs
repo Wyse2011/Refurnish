@@ -465,6 +465,8 @@ public sealed partial class MainWindow : Window
 
         DrawStoreSetup(inHouse, roomProfile, bagProfile);
         ImGui.Separator();
+        DrawFullRebuild(canStore, inHouse);
+        ImGui.Separator();
 
         var rows = p.Of(PlanAction.Store).Where(e => e.Item != null)
             .OrderBy(e => ItemName(e.ItemId)).ThenBy(e => e.Item!.Container).ThenBy(e => e.Item!.Slot)
@@ -588,6 +590,63 @@ public sealed partial class MainWindow : Window
             ImGui.PopID();
         }
         ImGui.EndTable();
+    }
+
+    private bool rebuildConfirmPending;
+
+    /// <summary>
+    /// Full rebuild: store everything in the room (including items the layout uses), so the layout can
+    /// then be placed into an empty room with every item going straight to its exact spot.
+    /// </summary>
+    private void DrawFullRebuild(bool canStore, bool inHouse)
+    {
+        var exec = plugin.Executor;
+        if (!ImGui.CollapsingHeader("Full rebuild (no MakePlace needed)###fullRebuild")) return;
+
+        ImGui.TextWrapped("1. Store everything in this room, including items the new layout uses.\n"
+                          + "2. Go to the Retrieve tab, choose \"At its spot in the layout\", and press Place all needed. "
+                          + "In an empty room each item goes straight to its exact spot, floor items first, so nothing needs moving afterwards.");
+
+        var placed = inHouse
+            ? LiveInventory.ReadOccupied(LiveInventory.InteriorPlaced, out _)
+            : new Dictionary<(int Container, int Slot), (uint ItemId, byte Stain)>();
+        ImGui.BeginDisabled(!canStore || exec.Running || placed.Count == 0);
+        if (ImGui.Button($"Store everything in this room ({placed.Count})...##rebuild", new Vector2(320, 28)))
+        {
+            rebuildConfirmPending = true;
+            ImGui.OpenPopup("##confirmRebuild");
+        }
+        ImGui.EndDisabled();
+        if (!inHouse) ImGui.TextColored(Warn, "Go inside this room first.");
+        else if (!canStore) ImGui.TextColored(Warn, "Set up storing first (see Setup above).");
+
+        if (!ImGui.BeginPopup("##confirmRebuild")) { rebuildConfirmPending = false; return; }
+
+        var roomFree = LiveInventory.FreeSlots(LiveInventory.InteriorStoreroom);
+        ImGui.TextUnformatted($"Store all {placed.Count} furnishings in this room, including ones the layout uses?");
+        ImGui.Spacing();
+        if (roomFree < 0)
+            ImGui.TextColored(Warn, "The storeroom isn't loaded. Open the storeroom tab in the furnishing window first.");
+        else if (roomFree < placed.Count)
+            ImGui.TextColored(Warn, $"The storeroom only has {roomFree} free slots. The rest go to your inventory if that's set up; otherwise it stops when full.");
+        else
+            ImGui.TextColored(Good, $"The storeroom has {roomFree} free slots, enough for everything.");
+        ImGui.TextWrapped("Every item is checked before it's stored, one at a time. Afterwards, place the layout from the Retrieve tab.");
+        ImGui.Spacing();
+
+        if (ImGui.Button("Yes, store everything##rebuild", new Vector2(170, 0)) && rebuildConfirmPending)
+        {
+            rebuildConfirmPending = false;
+            exec.Enqueue(placed.Select(kv => new StoreJob(selectedHouse, kv.Key.Container, kv.Key.Slot, kv.Value.ItemId, kv.Value.Stain, Everything: true)));
+            ImGui.CloseCurrentPopup();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel##rebuild", new Vector2(100, 0)))
+        {
+            rebuildConfirmPending = false;
+            ImGui.CloseCurrentPopup();
+        }
+        ImGui.EndPopup();
     }
 
     private void DrawConfirmPopup(List<PlanEntry> selected)

@@ -6,7 +6,11 @@ using Refurnish.Planning;
 
 namespace Refurnish.Automation;
 
-public readonly record struct StoreJob(ulong HouseId, int Container, int Slot, uint ItemId, byte Stain)
+/// <param name="Everything">
+/// Full rebuild: store this item even though the layout uses it (it'll be placed back at its exact
+/// spot afterwards). The slot is still checked live before every item.
+/// </param>
+public readonly record struct StoreJob(ulong HouseId, int Container, int Slot, uint ItemId, byte Stain, bool Everything = false)
 {
     public (int, int) SlotKey => (Container, Slot);
 }
@@ -148,15 +152,38 @@ public sealed class StoreExecutor
         if (plugin.UiLearner.Active) return "Learning is active. Finish or cancel it first.";
         if (!LiveInventory.IsInteriorPlaced(job.Container)) return "That isn't a placed-furniture slot.";
 
-        // Re-plan from a live read: is a copy of this item (same dye) still unneeded, and where is it now?
-        var cache = plugin.Cache.TryGet(Plugin.PlayerState.ContentId);
-        var resolved = LiveStoreResolver.Resolve(plugin.MainWindow.CurrentLayout, cache, job);
-        if (resolved == null)
+        if (job.Everything)
         {
-            skipOnly = true; // harmless: nothing to do for this one, so carry on with the rest
-            return "This item is no longer an extra (the layout uses every copy, or it was already moved), so it was skipped.";
+            // Full rebuild: find this item (same dye) wherever it sits now; slots can shift as items leave.
+            if (LiveInventory.TryGetSlot(job.Container, job.Slot, out var id0, out var st0) && id0 == job.ItemId && st0 == job.Stain)
+            {
+                target = (job.Container, job.Slot);
+            }
+            else
+            {
+                var elsewhere = LiveInventory.ReadOccupied(LiveInventory.InteriorPlaced, out _)
+                    .Where(kv => kv.Value.ItemId == job.ItemId && kv.Value.Stain == job.Stain)
+                    .Select(kv => kv.Key).ToList();
+                if (elsewhere.Count == 0)
+                {
+                    skipOnly = true;
+                    return "Already stored.";
+                }
+                target = elsewhere[0];
+            }
         }
-        target = resolved.Value;
+        else
+        {
+            // Re-plan from a live read: is a copy of this item (same dye) still unneeded, and where is it now?
+            var cache = plugin.Cache.TryGet(Plugin.PlayerState.ContentId);
+            var resolved = LiveStoreResolver.Resolve(plugin.MainWindow.CurrentLayout, cache, job);
+            if (resolved == null)
+            {
+                skipOnly = true; // harmless: nothing to do for this one, so carry on with the rest
+                return "This item is no longer an extra (the layout uses every copy, or it was already moved), so it was skipped.";
+            }
+            target = resolved.Value;
+        }
 
         // Final check on the exact slot about to be sent.
         if (!LiveInventory.TryGetSlot(target.Container, target.Slot, out var itemId, out var stain)
