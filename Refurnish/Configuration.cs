@@ -28,6 +28,9 @@ public class Configuration : IPluginConfiguration
     /// <summary>Shift the layout up or down so its floor matches the floor you're standing on.</summary>
     public bool MatchLayoutFloor { get; set; }
 
+    /// <summary>In layout mode, place items that can't go straight to their spot near you instead (for MakePlace to move).</summary>
+    public bool LayoutFallbackNearMe { get; set; } = true;
+
     /// <summary>A shift typed in by hand, used instead of the automatic one. Null means automatic.</summary>
     public float? LayoutShiftOverride { get; set; }
 

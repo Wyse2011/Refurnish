@@ -68,6 +68,16 @@ public sealed class UiPlacer
     private readonly HashSet<(int, int)> failedThisPass = new();
     private readonly HashSet<(int, int)> deferred = new();   // higher items held back until the floor items are in
     private int placedThisPass;
+    private PlaceSpot? spotOverride;                          // set for the final "place the rest nearby" pass
+
+    /// <summary>The spot mode in use right now (the final fallback pass places near you).</summary>
+    private PlaceSpot EffectiveSpot => spotOverride ?? plugin.Configuration.UiPlaceSpot;
+
+    /// <summary>Items placed near you in the fallback pass, for MakePlace to move (last run).</summary>
+    public int PlacedNearby { get; private set; }
+
+    /// <summary>True during the final pass that places leftover layout items near you.</summary>
+    public bool InFallbackPass => spotOverride != null;
     private readonly Dictionary<(int, int), string> lastProblem = new();
 
     private Step step = Step.Idle;
@@ -152,6 +162,8 @@ public sealed class UiPlacer
         failedThisPass.Clear();
         deferred.Clear();
         placedThisPass = 0;
+        spotOverride = null;
+        PlacedNearby = 0;
         lastProblem.Clear();
         noSpot.Clear();
         noSpotItems.Clear();
@@ -311,7 +323,7 @@ public sealed class UiPlacer
 
         // Layout mode: put floor-standing items (tables, partitions, lofts) in first. Anything higher
         // usually sits on one of them, so it waits for the next pass. This isn't a failure.
-        if (mode == UiPlaceMode.All && plugin.Configuration.UiPlaceSpot == PlaceSpot.Layout && Pass == 1)
+        if (mode == UiPlaceMode.All && EffectiveSpot == PlaceSpot.Layout && Pass == 1)
         {
             var t = LayoutTarget(resolved.Value.Need, heightShift, out _);
             var me = Plugin.ObjectTable.LocalPlayer;
@@ -366,7 +378,7 @@ public sealed class UiPlacer
         if (DateTime.UtcNow - previewSeenUtc < PreviewSettle) return;
         if (DateTime.UtcNow - stepStartedUtc < MinWaitAfterMenu) return;
 
-        var spotMode = plugin.Configuration.UiPlaceSpot;
+        var spotMode = EffectiveSpot;
 
         // "At its spot in the layout" means exactly that: if the spot can't be used, the item stays
         // in the storeroom (listed afterwards) rather than being dropped somewhere else.
@@ -495,6 +507,7 @@ public sealed class UiPlacer
         {
             Placed++;
             placedThisPass++;
+            if (spotOverride != null) PlacedNearby++;
             failuresInARow = 0;
             previousGameError = null;
             spotTries = 0;
@@ -522,7 +535,7 @@ public sealed class UiPlacer
 
         // When Refurnish chose the spot, a refusal usually means that spot is blocked (a wall, an
         // item it couldn't see). Remember it and try the same item at the next free spot.
-        if (plugin.Configuration.UiPlaceSpot == PlaceSpot.NearMe && gameError != null && spotTries < MaxSpotTries)
+        if (EffectiveSpot == PlaceSpot.NearMe && gameError != null && spotTries < MaxSpotTries)
         {
             badCells.Add(Cell(sentSpot));
             spotTries++;
@@ -540,7 +553,7 @@ public sealed class UiPlacer
         // The same refusal twice in a row means it's the spot, not the item.
         // (Only "in front of me" uses the same spot every time; in layout mode a refusal often just
         // means the surface underneath isn't placed yet.)
-        if (gameError != null && gameError == previousGameError && plugin.Configuration.UiPlaceSpot == PlaceSpot.InFront)
+        if (gameError != null && gameError == previousGameError && EffectiveSpot == PlaceSpot.InFront)
         {
             Stop($"The game refused twice in a row (\"{gameError}\"). The spot is probably blocked; "
                  + "try \"Near me\", or stand somewhere more open.");
@@ -611,6 +624,26 @@ public sealed class UiPlacer
             return;
         }
 
+        // Layout mode: whatever couldn't go straight to its spot is placed nearby instead, so every
+        // needed item ends up in the room and MakePlace can move it into position.
+        var leftovers = failedThisPass.Count + noSpot.Count;
+        if (mode == UiPlaceMode.All && spotOverride == null && plugin.Configuration.UiPlaceSpot == PlaceSpot.Layout
+            && plugin.Configuration.LayoutFallbackNearMe && leftovers > 0)
+        {
+            Log($"{leftovers} item(s) couldn't go straight to their spot. Placing them near you so MakePlace can move them into position.");
+            spotOverride = PlaceSpot.NearMe;
+            Pass++;
+            failedThisPass.Clear();
+            noSpot.Clear();
+            noSpotItems.Clear();
+            placedThisPass = 0;
+            failuresInARow = 0;
+            index = 0;
+            step = Step.Ready;
+            nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1);
+            return;
+        }
+
         if (remaining > 0)
             Log(Pass >= MaxPasses
                 ? $"Stopped after {MaxPasses} passes with {remaining} item(s) still unplaced."
@@ -633,9 +666,12 @@ public sealed class UiPlacer
         step = Step.Idle;
         Unhook();
         var leftover = noSpotItems.Count > 0 ? $" {noSpotItems.Count} stayed in the storeroom because their layout spot couldn't be used." : "";
+        var nearby = PlacedNearby > 0
+            ? $" {PlacedNearby} of those are near you because their spot wasn't free yet: apply the layout in MakePlace to move them into position."
+            : "";
         Summary = mode == UiPlaceMode.Test
             ? "Test finished."
-            : (FinalFailures > 0 ? $"Done. Placed {Placed}; {FinalFailures} couldn't be placed (see the log)." : $"Done. Placed {Placed}.") + leftover;
+            : (FinalFailures > 0 ? $"Done. Placed {Placed}; {FinalFailures} couldn't be placed (see the log)." : $"Done. Placed {Placed}.") + nearby + leftover;
         Log(Summary);
     }
 

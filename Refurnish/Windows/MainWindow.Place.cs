@@ -269,7 +269,7 @@ public sealed partial class MainWindow
             if (countdown > 0)
                 ImGui.TextColored(Warn, $"Starting in {Math.Ceiling(countdown)}...");
             else
-                ImGui.TextColored(Warn, $"Working... placed {placer.Placed} so far{(placer.Pass > 1 ? $" (pass {placer.Pass})" : "")}.");
+                ImGui.TextColored(Warn, $"Working... placed {placer.Placed} so far{(placer.InFallbackPass ? " (placing the rest near you)" : placer.Pass > 1 ? $" (pass {placer.Pass})" : "")}.");
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
             if (ImGui.Button("STOP##ui", new Vector2(-1, 32))) placer.Stop("Stopped by you.");
             ImGui.PopStyleColor();
@@ -314,7 +314,16 @@ public sealed partial class MainWindow
                 _ => "Each item goes straight to its final position. If an item's spot can't be used here, it stays in the storeroom "
                      + "and is listed afterwards. Items that were already placed still need MakePlace to move them.",
             });
-            if (spot == PlaceSpot.Layout) DrawHeightCheck();
+            if (spot == PlaceSpot.Layout)
+            {
+                var fallback = plugin.Configuration.LayoutFallbackNearMe;
+                if (ImGui.Checkbox("If an item can't go straight to its spot, place it near me for MakePlace to move##uiFallback", ref fallback))
+                {
+                    plugin.Configuration.LayoutFallbackNearMe = fallback;
+                    plugin.Configuration.Save();
+                }
+                DrawHeightCheck();
+            }
             ImGui.TextWrapped("Keep the furnishing window on its storeroom tab and don't click in it while Refurnish works. "
                               + "To stop, type /refurnish stop.");
         }
