@@ -40,6 +40,8 @@ public sealed partial class MainWindow
                 var dye = g.Key.ActualStain == 0 ? "" : $" ({stains!.Name(g.Key.ActualStain)})";
                 ImGui.BulletText($"{g.Count()}x {ItemName(g.Key.ItemId)}{dye}");
             }
+            ImGui.Spacing();
+            ImGui.TextDisabled("To help rebuild automatic placing, see the Placement test tab.");
             return;
         }
 
@@ -218,6 +220,38 @@ public sealed partial class MainWindow
             ImGui.PopID();
         }
         ImGui.EndTable();
+    }
+
+    private void DrawPlacementTest()
+    {
+        var rec = plugin.PlacementTest;
+        ImGui.TextColored(Warn, "Placement test (recording only)");
+        ImGui.TextWrapped("This only watches; it never sends anything to the game. It records what the game itself does "
+                          + "while you place an item by hand, so placing can be rebuilt on the game's own steps.");
+        ImGui.TextWrapped("1. Press Start recording.\n"
+                          + "2. Open the furnishing window, go to the storeroom tab, pick up one item, and place it anywhere.\n"
+                          + "3. Pick up a second item, then press Escape to cancel instead of placing it.\n"
+                          + "4. Press Stop, then Copy log, and paste it into the chat.");
+
+        if (rec.SetupError != null) { ImGui.TextColored(Bad, rec.SetupError); return; }
+
+        if (rec.Recording)
+        {
+            ImGui.TextColored(Warn, $"Recording... ({rec.LineCount} lines)");
+            if (ImGui.Button("Stop recording", new Vector2(160, 0))) rec.Stop();
+        }
+        else
+        {
+            if (ImGui.Button("Start recording", new Vector2(160, 0))) rec.Start();
+            ImGui.SameLine();
+            ImGui.BeginDisabled(rec.LineCount == 0);
+            if (ImGui.Button("Copy log", new Vector2(120, 0))) ImGui.SetClipboardText(rec.Text());
+            ImGui.EndDisabled();
+        }
+
+        ImGui.Separator();
+        foreach (var line in rec.Tail(25))
+            ImGui.TextDisabled(line);
     }
 
     private void DrawPlaceConfirm(List<PlanEntry> selected)

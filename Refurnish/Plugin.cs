@@ -21,6 +21,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IGameInteropProvider GameInterop { get; private set; } = null!;
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
     internal static string Version => typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "?";
 
@@ -39,6 +40,7 @@ public sealed class Plugin : IDalamudPlugin
     public PacketRecorder Packets { get; }
     public PlaceLearner PlaceLearner { get; }
     public PlaceExecutor Placer { get; }
+    public PlacementRecorder PlacementTest { get; }
     public FileDialogManager FileDialog { get; } = new();
     public WindowSystem WindowSystem { get; } = new("Refurnish");
     public MainWindow MainWindow { get; }
@@ -56,6 +58,7 @@ public sealed class Plugin : IDalamudPlugin
         if (PlaceExecutor.DirectPlacingEnabled) Packets.Enable(); // don't watch network traffic at all while placing is off
         PlaceLearner = new PlaceLearner(this);
         Placer = new PlaceExecutor(this);
+        PlacementTest = new PlacementRecorder();
         Framework.Update += OnFrameworkUpdate;
 
         MainWindow = new MainWindow(this);
@@ -82,6 +85,7 @@ public sealed class Plugin : IDalamudPlugin
         PlaceLearner.Cancel();
         Recorder.Dispose();
         Packets.Dispose();
+        PlacementTest.Dispose();
 
         WindowSystem.RemoveAllWindows();
         Scanner.Dispose();
@@ -107,6 +111,7 @@ public sealed class Plugin : IDalamudPlugin
             PlaceLearner.Update();
             Executor.Update();
             Placer.Update();
+            PlacementTest.Update();
             Packets.Update();
         }
         catch (System.Exception ex)

@@ -80,9 +80,15 @@ public sealed partial class MainWindow : Window
                 if (plan != null) DrawPlanTabs(plan);
             }
 
-            if (ImGui.BeginTabItem("Data sources"))
+            if (ImGui.BeginTabItem("Data sources###tabSources"))
             {
                 DrawSources(cache);
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Placement test###tabPlacementTest"))
+            {
+                DrawPlacementTest();
                 ImGui.EndTabItem();
             }
             ImGui.EndTabBar();
@@ -185,13 +191,13 @@ public sealed partial class MainWindow : Window
 
     private void DrawPlanTabs(LayoutPlan p)
     {
-        if (ImGui.BeginTabItem("Summary"))
+        if (ImGui.BeginTabItem("Summary###tabSummary"))
         {
             DrawSummary(p);
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem($"Retrieve ({p.Count(PlanAction.Retrieve)})"))
+        if (ImGui.BeginTabItem($"Retrieve ({p.Count(PlanAction.Retrieve)})###tabRetrieve"))
         {
             DrawPlaceSection(p);
             ImGui.Separator();
@@ -200,14 +206,14 @@ public sealed partial class MainWindow : Window
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem($"Store ({p.Count(PlanAction.Store)})"))
+        if (ImGui.BeginTabItem($"Store ({p.Count(PlanAction.Store)})###tabStore"))
         {
             DrawStoreTab(p);
             ImGui.EndTabItem();
         }
 
         var problems = p.Count(PlanAction.Missing) + p.DyeMismatches;
-        if (ImGui.BeginTabItem($"Missing / dye ({problems})"))
+        if (ImGui.BeginTabItem($"Missing / dye ({problems})###tabMissing"))
         {
             ImGui.TextColored(Bad, "Not found anywhere Refurnish has seen:");
             DrawItemTable("missing", p.Of(PlanAction.Missing), showNeeded: true);
@@ -217,7 +223,7 @@ public sealed partial class MainWindow : Window
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem($"Already placed ({p.Count(PlanAction.Keep)})"))
+        if (ImGui.BeginTabItem($"Already placed ({p.Count(PlanAction.Keep)})###tabKeep"))
         {
             ImGui.TextWrapped("These stay. MakePlace will move them into position.");
             DrawItemTable("keep", p.Of(PlanAction.Keep), showNeeded: true);
