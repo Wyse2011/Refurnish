@@ -13,10 +13,11 @@ public sealed record CapturedPacket(DateTime Utc, byte[] Bytes, uint A3, uint A4
 }
 
 /// <summary>
-/// Watches the game's outgoing network messages while placing is being learned or performed.
-/// It passes every message through untouched; while learning it also keeps a copy. Sending
-/// reuses the game's own send function with a message built from a learned copy.
-/// Off unless something needs it.
+/// Watches the game's outgoing network messages. Every message is passed through untouched.
+/// It's on from plugin load so it always knows the game's current connection (needed to send);
+/// while learning it also keeps a copy of each message. Sending reuses the game's own send
+/// function with a message built from a learned copy. The remembered connection is forgotten on
+/// every zone change and logout, so a stale one is never used.
 /// </summary>
 public sealed unsafe class PacketRecorder : IDisposable
 {
@@ -31,7 +32,6 @@ public sealed unsafe class PacketRecorder : IDisposable
     private ZoneClient* lastClient;
     private DateTime lastClientUtc;
     private bool capturing;
-    private int users;
 
     public string? SetupError { get; }
 
@@ -48,23 +48,25 @@ public sealed unsafe class PacketRecorder : IDisposable
         }
     }
 
-    /// <summary>The game sends messages constantly, so within a moment of turning on this is known.</summary>
-    public bool HasClient => lastClient != null && DateTime.UtcNow - lastClientUtc < TimeSpan.FromSeconds(5);
+    /// <summary>True once the game has sent any message since the last zone change.</summary>
+    public bool HasClient => lastClient != null;
 
-    public void Acquire()
+    /// <summary>Turns on passive watching. Called once at plugin load.</summary>
+    public void Enable()
     {
-        if (users++ == 0) hook?.Enable();
+        hook?.Enable();
+        Plugin.ClientState.TerritoryChanged += OnTerritoryChanged;
+        Plugin.ClientState.Logout += OnLogout;
     }
 
-    public void Release()
-    {
-        if (users == 0) return;
-        if (--users == 0)
-        {
-            hook?.Disable();
-            lastClient = null;
-        }
-    }
+    private void OnTerritoryChanged(uint territory) => lastClient = null;
+
+    private void OnLogout(int type, int code) => lastClient = null;
+
+    // Kept so existing callers don't need to change; watching is always on now.
+    public void Acquire() { }
+
+    public void Release() { }
 
     public void StartCapture()
     {
@@ -137,6 +139,8 @@ public sealed unsafe class PacketRecorder : IDisposable
 
     public void Dispose()
     {
+        Plugin.ClientState.TerritoryChanged -= OnTerritoryChanged;
+        Plugin.ClientState.Logout -= OnLogout;
         hook?.Dispose();
         foreach (var b in buffers) Marshal.FreeHGlobal(b.Ptr);
         buffers.Clear();

@@ -38,7 +38,7 @@ public sealed partial class MainWindow : Window
     private ulong planHouse;
     private LoadedLayout? planLayout;
 
-    public MainWindow(Plugin plugin) : base("Refurnish##RefurnishMain")
+    public MainWindow(Plugin plugin) : base($"Refurnish v{Plugin.Version}###RefurnishMain")
     {
         this.plugin = plugin;
         SizeConstraints = new WindowSizeConstraints

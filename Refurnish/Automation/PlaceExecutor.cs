@@ -37,7 +37,7 @@ public sealed class PlaceExecutor
     private const double MinPauseSeconds = 1.0;
 
     private static readonly TimeSpan ConfirmTimeout = TimeSpan.FromSeconds(6);
-    private static readonly TimeSpan ClientWait = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ClientWait = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan PauseAfterFailure = TimeSpan.FromSeconds(2);
 
     private enum Outcome { Ok, Skip, Retry, GiveUpOnItem, StopAll }
@@ -155,7 +155,7 @@ public sealed class PlaceExecutor
         if (!plugin.Packets.HasClient)
         {
             if (DateTime.UtcNow - waitingForClientSinceUtc > ClientWait)
-                Stop("Couldn't find the game's network connection.");
+                Stop("Couldn't find the game's network connection. Take a step or two with your character, then try again.");
             return;
         }
 

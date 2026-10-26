@@ -20,6 +20,9 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
     [PluginService] internal static IGameInteropProvider GameInterop { get; private set; } = null!;
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
+    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+
+    internal static string Version => typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "?";
 
     /// <summary>Learned store requests are only trusted on the game version they were learned on.</summary>
     internal static string GameVersion =>
@@ -50,6 +53,7 @@ public sealed class Plugin : IDalamudPlugin
         Learner = new StoreLearner(this);
         Executor = new StoreExecutor(this);
         Packets = new PacketRecorder();
+        Packets.Enable();
         PlaceLearner = new PlaceLearner(this);
         Placer = new PlaceExecutor(this);
         Framework.Update += OnFrameworkUpdate;
