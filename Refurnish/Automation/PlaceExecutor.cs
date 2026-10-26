@@ -15,11 +15,13 @@ public readonly record struct PlaceJob(ulong HouseId, int Container, int Slot, u
 /// <summary>
 /// Places furniture from the storeroom or your inventory, one item at a time.
 ///
-/// Retry rules: each item gets two tries. If both fail, it's set aside and the run moves on.
-/// After the whole list, one more pass goes back over the items that were set aside, again with
-/// two tries each. Problems with the situation rather than the item (you left the room, the room
-/// is full, setup is missing, the network connection can't be found) stop everything at once, and
-/// so do six failed tries in a row, which means something is wrong with every item, not just one.
+/// Retry rules: if an item can't be placed, it's set aside and the run moves straight on to the
+/// next one. After the whole list, it goes back to the top and tries the set-aside items again.
+/// Problems with the situation rather than the item (you left the room, the room is full, the
+/// network connection can't be found) stop everything at once, and so do ten failures in a row.
+///
+/// After every placement it reads where the game actually put the item. If that isn't where it
+/// was sent, the learned message is wrong, and everything stops immediately.
 ///
 /// Before every try it re-plans from a live read (is it still needed, and where does it go?) and
 /// checks the slot still holds that exact item. After sending, it waits for the game to confirm
@@ -27,9 +29,12 @@ public readonly record struct PlaceJob(ulong HouseId, int Container, int Slot, u
 /// </summary>
 public sealed class PlaceExecutor
 {
-    public const int TriesPerPass = 2;
+    public const int TriesPerPass = 1;
     public const int Passes = 2;
-    private const int MaxFailedTriesInARow = 6;
+    private const int MaxFailedTriesInARow = 10;
+    private const float PositionTolerance = 0.05f;
+    private const float RotationTolerance = 0.05f;
+    private const double MinPauseSeconds = 1.0;
 
     private static readonly TimeSpan ConfirmTimeout = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan ClientWait = TimeSpan.FromSeconds(5);
@@ -47,6 +52,9 @@ public sealed class PlaceExecutor
     private int currentContainer;
     private int currentSlot;
     private int placedCountBefore;
+    private Dictionary<int, LiveFurniture.Entry> furnitureBefore = new();
+    private Vector3 sentPosition;
+    private float sentRotation;
     private DateTime sentUtc;
     private DateTime nextAllowedUtc = DateTime.MinValue;
     private DateTime waitingForClientSinceUtc = DateTime.MinValue;
@@ -161,6 +169,15 @@ public sealed class PlaceExecutor
             return;
         }
 
+        var furniture = LiveFurniture.Read();
+        if (furniture == null)
+        {
+            Handle(job, Outcome.StopAll, "Couldn't read this room's furniture, so placement couldn't be checked.");
+            return;
+        }
+        furnitureBefore = furniture;
+        sentPosition = position;
+        sentRotation = rotation;
         placedCountBefore = CountPlaced(job.ItemId);
         var data = profile!.Build(target.Container, target.Slot, position, rotation);
 
@@ -244,7 +261,7 @@ public sealed class PlaceExecutor
 
                 if (tries < TriesPerPass)
                 {
-                    queue.Insert(0, job); // second try straight away
+                    queue.Insert(0, job); // another try straight away (only if TriesPerPass > 1)
                     states[job.SlotKey] = (JobState.Queued, $"Retrying: {message}");
                 }
                 else
@@ -263,7 +280,7 @@ public sealed class PlaceExecutor
     {
         failedTriesInARow++;
         if (failedTriesInARow < MaxFailedTriesInARow) return true;
-        Stop($"{MaxFailedTriesInARow} tries in a row failed, so something is wrong beyond a single item. Stopped.");
+        Stop($"{MaxFailedTriesInARow} items in a row couldn't be placed, so something is wrong beyond a single item. Stopped.");
         return false;
     }
 
@@ -350,11 +367,34 @@ public sealed class PlaceExecutor
 
         if (!stillThere && placed)
         {
-            states[job.SlotKey] = (JobState.Done, "Placed");
+            // Confirm it landed where it was sent. Wait for the furniture list to catch up.
+            var now = LiveFurniture.Read();
+            var added = now == null ? new List<LiveFurniture.Entry>() : LiveFurniture.New(furnitureBefore, now);
+            if (added.Count == 0)
+            {
+                if (DateTime.UtcNow - sentUtc <= ConfirmTimeout) return;
+                current = null;
+                Handle(job, Outcome.StopAll, "The item was placed but its position couldn't be confirmed. Stopped to be safe.");
+                return;
+            }
+
+            var hit = added.Any(a => Vector3.Distance(a.Position, sentPosition) < PositionTolerance
+                                     && LiveFurniture.AngleDiff(a.Rotation, sentRotation) < RotationTolerance);
             current = null;
+            if (!hit)
+            {
+                var a = added[0];
+                Handle(job, Outcome.StopAll,
+                    $"The item landed at ({a.Position.X:0.00}, {a.Position.Y:0.00}, {a.Position.Z:0.00}) instead of " +
+                    $"({sentPosition.X:0.00}, {sentPosition.Y:0.00}, {sentPosition.Z:0.00}). The learned message isn't right, " +
+                    "so everything stopped. Please send this message over.");
+                return;
+            }
+
+            states[job.SlotKey] = (JobState.Done, "Placed");
             DoneThisRun++;
             failedTriesInARow = 0;
-            nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(Math.Max(0.5, plugin.Configuration.StoreDelaySeconds));
+            nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(Math.Max(MinPauseSeconds, plugin.Configuration.StoreDelaySeconds));
             return;
         }
 

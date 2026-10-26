@@ -50,8 +50,9 @@ public sealed partial class MainWindow
             if (needsBag)
                 ImGui.TextColored(bagProfile != null ? Good : Warn, bagProfile != null ? "  From inventory: ready" : "  From inventory: not set up");
             ImGui.TextWrapped("Press Learn, then place one item yourself from the storeroom (or inventory) using the game's menu. "
-                              + "Anywhere is fine. Refurnish copies the exact message the game sends. Needed once per room and "
-                              + "source, and again after each game patch.");
+                              + "Anywhere is fine, but turn it a little before setting it down (any angle except straight ahead). "
+                              + "Refurnish checks where it really landed and finds the matching message the game sent. "
+                              + "Needed once per room and source, and again after each game patch.");
 
             if (learner.Active)
             {
@@ -216,9 +217,10 @@ public sealed partial class MainWindow
             : "Each is dropped where you're standing.");
         if (free >= 0 && selected.Count > free)
             ImGui.TextColored(Warn, $"This room only has about {free} free furnishing slots. It will stop when full.");
-        ImGui.TextWrapped($"Each item is re-checked before it's placed and gets {PlaceExecutor.TriesPerPass} tries. "
-                          + "Items that still fail are set aside and tried once more after the rest. "
-                          + "It stops completely if you leave the room, the room is full, or several tries fail in a row.");
+        ImGui.TextWrapped("If an item can't be placed, it's set aside and the next one is tried. After the whole list, "
+                          + "it goes back to the top for the ones that were missed. Every placement is checked against where it "
+                          + "actually landed; if that's ever wrong, everything stops. It also stops if you leave the room, "
+                          + "the room is full, or ten items in a row fail.");
         ImGui.Spacing();
 
         if (ImGui.Button("Yes, place them", new Vector2(150, 0)) && placeConfirmPending)

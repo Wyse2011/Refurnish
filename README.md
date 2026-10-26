@@ -91,7 +91,9 @@ Choose where items go:
 - **Where I'm standing:** dropped at your feet for MakePlace to arrange.
 
 **One-time setup per room and source.** Press **Learn** in that section, then place one item
-yourself from the storeroom (or inventory) with the game's menu, anywhere. The game's network
+yourself from the storeroom (or inventory) with the game's menu, anywhere, turned a little so it
+isn't facing straight ahead. Refurnish reads where it really landed and only accepts the message
+that contains that exact slot, position and rotation. The game's network
 message IDs change every patch, so Refurnish copies the exact message the game sent and only
 swaps the item, position and rotation. It's tied to the room and game version, and in some cases
 only to the current game session (the window says so).
@@ -100,14 +102,16 @@ Before every item Refurnish re-plans from a live read of the room, checks the sl
 that exact item, checks there's a free furnishing slot and that the position is sensible, and
 afterwards waits for the item to actually appear in the room.
 
-**If an item fails:** it gets a second try straight away. If that fails too, it's set aside and
-the run moves on to the next item. After the whole list, Refurnish goes back to the top and tries
-the set-aside items once more (two tries each). Anything still failing is marked with the reason.
-An item that left its slot but never appeared is not retried, since its state is unknown.
+**Position check:** after every placement, Refurnish reads where the game actually put the item.
+If it isn't where it was sent, the learned message is wrong and everything stops immediately.
 
-The whole run still stops at once if you leave the room, the room runs out of furnishing slots,
-the game's connection can't be found, or six tries in a row fail (which points to a problem with
-everything rather than one item).
+**If an item can't be placed:** it's set aside and the run moves straight on to the next item.
+After the whole list, Refurnish goes back to the top and tries the set-aside items again. Anything
+still failing is marked with the reason. An item that left its slot but never appeared is not
+retried, since its state is unknown.
+
+The whole run also stops if you leave the room, the room runs out of furnishing slots, the
+game's connection can't be found, or ten items in a row fail.
 
 ---
 
