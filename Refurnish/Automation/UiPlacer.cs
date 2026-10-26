@@ -93,6 +93,7 @@ public sealed class UiPlacer
     private const float CellSize = 1.0f;
     private const float Clearance = 0.9f;
     private Layout.Requirement pendingNeed;
+    private float heightShift; // added to layout heights when "match this floor" is on
     private DateTime? previewSeenUtc;
     private bool previewMoved;
     private DateTime previewMovedUtc;
@@ -152,6 +153,8 @@ public sealed class UiPlacer
         gameError = null;
         previousGameError = null;
         nearMeCount = 0;
+        heightShift = plugin.MainWindow.LayoutHeightShift();
+        if (heightShift != 0) Log($"Layout heights shifted by {heightShift:+0.00;-0.00} to match this floor.");
         badCells.Clear();
         spotTries = 0;
         nextAllowedUtc = DateTime.UtcNow + (placeMode == UiPlaceMode.Test ? TimeSpan.Zero : Countdown);
@@ -390,17 +393,19 @@ public sealed class UiPlacer
     /// </summary>
     private static bool FitsThisRoom(float y, out string why)
     {
-        var levels = new List<float>();
+        // Compare with the floor you're standing on. (Furniture can't be trusted for the low end:
+        // something placed oddly in the past could be sitting below the floor.)
         var me = Plugin.ObjectTable.LocalPlayer;
-        if (me != null) levels.Add(me.Position.Y);
+        if (me == null) { why = string.Empty; return true; }
+        var floor = me.Position.Y;
+        var highest = floor;
         var furniture = LiveFurniture.Read();
-        if (furniture != null) levels.AddRange(furniture.Values.Select(f => f.Position.Y));
-        if (levels.Count == 0) { why = string.Empty; return true; }
+        if (furniture != null)
+            foreach (var f in furniture.Values)
+                if (f.Position.Y >= floor - 0.5f) highest = MathF.Max(highest, f.Position.Y);
 
-        var low = levels.Min() - 0.5f;
-        var high = levels.Max() + 6f;
-        if (y < low) { why = $"at height {y:0.00}, below the floor here ({levels.Min():0.00})"; return false; }
-        if (y > high) { why = $"at height {y:0.00}, far above anything here (highest {levels.Max():0.00})"; return false; }
+        if (y < floor - 0.5f) { why = $"at height {y:0.00}, below the floor you're on ({floor:0.00})"; return false; }
+        if (y > highest + 6f) { why = $"at height {y:0.00}, far above anything here (highest {highest:0.00})"; return false; }
         why = string.Empty;
         return true;
     }
@@ -568,8 +573,9 @@ public sealed class UiPlacer
     {
         if (mode == PlaceSpot.Layout && need.HasPosition)
         {
-            if (FitsThisRoom(need.Position.Y, out var why))
-                return (need.Position, need.Rotation, "to its layout spot");
+            var target = need.Position + new System.Numerics.Vector3(0, heightShift, 0);
+            if (FitsThisRoom(target.Y, out var why))
+                return (target, need.Rotation, heightShift != 0 ? "to its layout spot (shifted to this floor)" : "to its layout spot");
             Log($"  The layout spot is {why}, so this item goes near you instead. The layout may be for a different room.");
         }
 

@@ -25,6 +25,9 @@ public class Configuration : IPluginConfiguration
     /// <summary>Where items placed through the furnishing window go.</summary>
     public PlaceSpot UiPlaceSpot { get; set; } = PlaceSpot.InFront;
 
+    /// <summary>Shift the layout up or down so its floor matches the floor you're standing on.</summary>
+    public bool MatchLayoutFloor { get; set; }
+
     /// <summary>Learned furnishing-window clicks for placing from the storeroom.</summary>
     public UiPlaceProfile? UiPlace { get; set; }
 

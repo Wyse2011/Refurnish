@@ -74,6 +74,20 @@ public sealed class LoadedLayout
         }
     }
 
+    /// <summary>
+    /// The layout's floor height: the height most of its items share (things standing on the floor
+    /// all sit at exactly the floor's height). Null if the layout has no positions.
+    /// </summary>
+    public float? FloorHeight
+    {
+        get
+        {
+            var ys = Interior.Where(r => r.HasPosition).Select(r => MathF.Round(r.Position.Y * 20) / 20).ToList();
+            if (ys.Count == 0) return null;
+            return ys.GroupBy(y => y).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).First().Key;
+        }
+    }
+
     public static LoadedLayout Load(string path, StainMatcher stains)
     {
         var json = File.ReadAllText(path);

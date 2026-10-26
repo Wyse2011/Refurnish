@@ -313,6 +313,7 @@ public sealed partial class MainWindow
                 PlaceSpot.NearMe => "Items are spread around where you're standing, for MakePlace to arrange.",
                 _ => "Each item goes straight to its final position. Items that were already placed still need MakePlace to move them.",
             });
+            if (spot == PlaceSpot.Layout) DrawHeightCheck();
             ImGui.TextWrapped("Keep the furnishing window on its storeroom tab and don't click in it while Refurnish works. "
                               + "To stop, type /refurnish stop.");
         }

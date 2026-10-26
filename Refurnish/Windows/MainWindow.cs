@@ -279,20 +279,44 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Compares the layout's item heights with the floor you're standing on.</summary>
+    /// <summary>
+    /// How far to move layout heights so the layout's floor lands on the floor you're standing on,
+    /// or 0 if that option is off (or can't be worked out).
+    /// </summary>
+    public float LayoutHeightShift()
+    {
+        var floor = layout?.FloorHeight;
+        var me = Plugin.ObjectTable.LocalPlayer;
+        if (!plugin.Configuration.MatchLayoutFloor || floor == null || me == null) return 0;
+        return me.Position.Y - floor.Value;
+    }
+
+    /// <summary>Compares the layout's floor with yours, and offers to shift the layout to match.</summary>
     private void DrawHeightCheck()
     {
-        var range = layout?.HeightRange;
+        var layoutFloor = layout?.FloorHeight;
         var me = Plugin.ObjectTable.LocalPlayer;
-        if (range == null || me == null || plugin.Scanner.CurrentHouseId != selectedHouse) return;
+        if (layoutFloor == null || me == null || plugin.Scanner.CurrentHouseId != selectedHouse) return;
 
         var floor = me.Position.Y;
-        var (min, max) = range.Value;
-        if (min < floor - 0.5f || max > floor + 12f)
-            ImGui.TextColored(Warn, $"Heights in this layout run from {min:0.0} to {max:0.0}, but your floor here is at {floor:0.0}. "
-                                    + "It may have been made for a different room or floor. Items whose spot doesn't fit this room "
-                                    + "are placed near you instead.");
-        else
-            ImGui.TextColored(Good, $"Heights in this layout ({min:0.0} to {max:0.0}) fit this room (floor at {floor:0.0}).");
+        var diff = floor - layoutFloor.Value;
+        if (MathF.Abs(diff) < 0.25f)
+        {
+            ImGui.TextColored(Good, $"This layout's floor ({layoutFloor:0.00}) matches the floor you're on ({floor:0.00}).");
+            return;
+        }
+
+        ImGui.TextColored(Warn, $"This layout's floor is at {layoutFloor:0.00}, but the floor you're on is at {floor:0.00} "
+                                + $"({MathF.Abs(diff):0.00} {(diff > 0 ? "higher" : "lower")}).");
+        var match = plugin.Configuration.MatchLayoutFloor;
+        if (ImGui.Checkbox($"Shift the layout {(diff > 0 ? "up" : "down")} by {MathF.Abs(diff):0.00} to match this floor", ref match))
+        {
+            plugin.Configuration.MatchLayoutFloor = match;
+            plugin.Configuration.Save();
+        }
+        ImGui.TextDisabled(match
+            ? "Layout spots are moved to this floor when placing. Stand on the floor the layout is for."
+            : "Without this, spots below your floor are placed near you instead.");
     }
 
     private void DrawGroupedBySource(IEnumerable<PlanEntry> entries, bool showNeeded)
