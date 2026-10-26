@@ -35,7 +35,11 @@ public sealed class StoreLearner
     public bool Start()
     {
         if (plugin.Recorder.SetupError != null) { Fail(plugin.Recorder.SetupError); return false; }
-        if (plugin.Executor.Running) { Fail("Wait for storing to finish first."); return false; }
+        if (plugin.Executor.Running || plugin.Placer.Running || plugin.PlaceLearner.Active)
+        {
+            Fail("Wait for other Refurnish actions to finish first.");
+            return false;
+        }
 
         houseId = plugin.Scanner.CurrentHouseId;
         if (houseId == 0) { Fail("Go inside the house you want to set up (you need decorating permission)."); return false; }

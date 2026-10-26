@@ -19,7 +19,13 @@ public class Configuration : IPluginConfiguration
     /// <summary>Learned store requests, one per house and destination.</summary>
     public List<StoreProfile> StoreProfiles { get; set; } = new();
 
-    /// <summary>Pause between items when storing several. Never less than 0.5 seconds.</summary>
+    /// <summary>Learned place messages, one per room and source (storeroom or inventory).</summary>
+    public List<PlaceProfile> PlaceProfiles { get; set; } = new();
+
+    /// <summary>Place items at their spot from the layout (true) or where you're standing (false).</summary>
+    public bool PlaceAtLayoutPosition { get; set; } = true;
+
+    /// <summary>Pause between items when storing or placing several. Never less than 0.5 seconds.</summary>
     public float StoreDelaySeconds { get; set; } = 1.5f;
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);

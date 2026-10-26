@@ -14,7 +14,7 @@ using Refurnish.Planning;
 
 namespace Refurnish.Windows;
 
-public sealed class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
     private static readonly Vector4 Good = new(0.55f, 0.85f, 0.55f, 1f);
     private static readonly Vector4 Warn = new(0.95f, 0.75f, 0.35f, 1f);
@@ -193,6 +193,9 @@ public sealed class MainWindow : Window
 
         if (ImGui.BeginTabItem($"Retrieve ({p.Count(PlanAction.Retrieve)})"))
         {
+            DrawPlaceSection(p);
+            ImGui.Separator();
+            ImGui.TextUnformatted("Everything to bring out, by where it is:");
             DrawGroupedBySource(p.Of(PlanAction.Retrieve), showNeeded: true);
             ImGui.EndTabItem();
         }

@@ -19,6 +19,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
     [PluginService] internal static IGameInteropProvider GameInterop { get; private set; } = null!;
+    [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
 
     /// <summary>Learned store requests are only trusted on the game version they were learned on.</summary>
     internal static string GameVersion =>
@@ -32,6 +33,9 @@ public sealed class Plugin : IDalamudPlugin
     public CommandRecorder Recorder { get; }
     public StoreLearner Learner { get; }
     public StoreExecutor Executor { get; }
+    public PacketRecorder Packets { get; }
+    public PlaceLearner PlaceLearner { get; }
+    public PlaceExecutor Placer { get; }
     public FileDialogManager FileDialog { get; } = new();
     public WindowSystem WindowSystem { get; } = new("Refurnish");
     public MainWindow MainWindow { get; }
@@ -45,6 +49,9 @@ public sealed class Plugin : IDalamudPlugin
         Recorder = new CommandRecorder();
         Learner = new StoreLearner(this);
         Executor = new StoreExecutor(this);
+        Packets = new PacketRecorder();
+        PlaceLearner = new PlaceLearner(this);
+        Placer = new PlaceExecutor(this);
         Framework.Update += OnFrameworkUpdate;
 
         MainWindow = new MainWindow(this);
@@ -52,7 +59,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open Refurnish. \"/refurnish stop\" stops storing immediately.",
+            HelpMessage = "Open Refurnish. \"/refurnish stop\" stops storing or placing immediately.",
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -66,8 +73,11 @@ public sealed class Plugin : IDalamudPlugin
         CommandManager.RemoveHandler(CommandName);
         Framework.Update -= OnFrameworkUpdate;
         Executor.Stop("Plugin unloaded.");
+        Placer.Stop("Plugin unloaded.");
         Learner.Cancel();
+        PlaceLearner.Cancel();
         Recorder.Dispose();
+        Packets.Dispose();
 
         WindowSystem.RemoveAllWindows();
         Scanner.Dispose();
@@ -79,6 +89,7 @@ public sealed class Plugin : IDalamudPlugin
         if (args.Trim().Equals("stop", System.StringComparison.OrdinalIgnoreCase))
         {
             Executor.Stop("Stopped with /refurnish stop.");
+            Placer.Stop("Stopped with /refurnish stop.");
             return;
         }
         MainWindow.Toggle();
@@ -89,13 +100,18 @@ public sealed class Plugin : IDalamudPlugin
         try
         {
             Learner.Update();
+            PlaceLearner.Update();
             Executor.Update();
+            Placer.Update();
+            Packets.Update();
         }
         catch (System.Exception ex)
         {
             Log.Error(ex, "Refurnish automation error");
             Executor.Stop("Something went wrong, so storing stopped. See /xllog for details.");
+            Placer.Stop("Something went wrong, so placing stopped. See /xllog for details.");
             Learner.Cancel();
+            PlaceLearner.Cancel();
         }
     }
 

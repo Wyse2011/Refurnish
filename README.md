@@ -13,7 +13,8 @@ It matches dyes from the MakePlace file, prefers copies that are already close a
 storeroom and inventory space, and can copy the whole plan to your clipboard as a checklist.
 
 It can also **store the furnishings the new layout doesn't use**, one at a time or all at once,
-with safety checks on every item (see below). Automated retrieval is next.
+with safety checks on every item, and **place the furnishings the layout needs** straight from
+your storeroom or inventory, at their final spot from the layout (see below).
 
 ## Install (for players)
 
@@ -76,6 +77,28 @@ Setup is tied to the house and to the game version, so it needs redoing after a 
   doesn't within a few seconds, everything stops. Nothing is retried automatically.
 - One item at a time, with a pause between items (1.5 seconds by default, never under 0.5).
 - **STOP** button in the window, or type `/refurnish stop`.
+
+## Placing furnishings from the storeroom or inventory
+
+At the top of the **Retrieve** tab, everything the layout needs that's already in this room's
+storeroom or your inventory gets a **Place** button, plus **Place all selected** with a
+confirmation.
+
+Choose where items go:
+
+- **At its spot in the layout** (default): straight to the final position and rotation from the
+  MakePlace file. Items that were already placed still need the MakePlace plugin to move them.
+- **Where I'm standing:** dropped at your feet for MakePlace to arrange.
+
+**One-time setup per room and source.** Press **Learn** in that section, then place one item
+yourself from the storeroom (or inventory) with the game's menu, anywhere. The game's network
+message IDs change every patch, so Refurnish copies the exact message the game sent and only
+swaps the item, position and rotation. It's tied to the room and game version, and in some cases
+only to the current game session (the window says so).
+
+Before every item Refurnish re-plans from a live read of the room, checks the slot still holds
+that exact item, checks there's a free furnishing slot and that the position is sensible, and
+afterwards waits for the item to actually appear in the room. Any problem stops the run.
 
 ---
 

@@ -26,7 +26,8 @@ public sealed record PlanEntry(
     byte NeededStain,
     byte ActualStain,
     CachedContainer? Source,
-    CachedItem? Item = null)
+    CachedItem? Item = null,
+    Requirement? Need = null)
 {
     public bool DyeMismatch => Action is PlanAction.Keep or PlanAction.Retrieve && NeededStain != ActualStain;
 }
@@ -125,7 +126,7 @@ public static class LayoutPlanner
                 var hit = pool.FirstOrDefault(i => !i.Used);
                 if (hit == null)
                 {
-                    plan.Entries.Add(new PlanEntry(PlanAction.Missing, need.ItemId, need.Stain, 0, null));
+                    plan.Entries.Add(new PlanEntry(PlanAction.Missing, need.ItemId, need.Stain, 0, null, null, need));
                     continue;
                 }
                 Use(plan, hit, need);
@@ -143,7 +144,7 @@ public static class LayoutPlanner
     {
         inst.Used = true;
         var action = inst.Priority == 0 ? PlanAction.Keep : PlanAction.Retrieve;
-        plan.Entries.Add(new PlanEntry(action, need.ItemId, need.Stain, inst.Stain, inst.Source, inst.Item));
+        plan.Entries.Add(new PlanEntry(action, need.ItemId, need.Stain, inst.Stain, inst.Source, inst.Item, need));
     }
 
     // Lower is better: use what's already placed, then what's closest at hand, and only take
