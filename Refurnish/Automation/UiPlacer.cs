@@ -11,6 +11,18 @@ using Refurnish.Planning;
 
 namespace Refurnish.Automation;
 
+public enum PlaceSpot
+{
+    /// <summary>Where the game puts the preview by itself: on the floor in front of you.</summary>
+    InFront,
+
+    /// <summary>Spread around you so items don't land on each other.</summary>
+    NearMe,
+
+    /// <summary>The item's final position from the layout.</summary>
+    Layout,
+}
+
 public enum UiPlaceMode
 {
     /// <summary>Pick up the first item in the list, report it, and put it back. Places nothing.</summary>
@@ -35,7 +47,7 @@ public enum UiPlaceMode
 /// </summary>
 public sealed class UiPlacer
 {
-    private enum Step { Idle, Ready, WaitMenuOpen, WaitPlaced, WaitMenuClosed }
+    private enum Step { Idle, Ready, WaitMenuOpen, WaitPreview, WaitPlaced, WaitMenuClosed }
 
     private static readonly TimeSpan MenuTimeout = TimeSpan.FromSeconds(1.5);
     private static readonly TimeSpan PlaceTimeout = TimeSpan.FromSeconds(6);
@@ -45,6 +57,10 @@ public sealed class UiPlacer
     private const int MaxFailuresInARow = 10;
     private static readonly TimeSpan Countdown = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan DiagnosticDelay = TimeSpan.FromSeconds(0.4);
+    private static readonly TimeSpan PreviewTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan PreviewSettle = TimeSpan.FromSeconds(0.25);
+    private static readonly TimeSpan MinWaitAfterMenu = TimeSpan.FromSeconds(0.6); // you took about 1s; the preview came at 0.3s
+    private const float MoveTolerance = 0.05f;
 
     private readonly Plugin plugin;
     private readonly List<string> log = new();
@@ -71,6 +87,10 @@ public sealed class UiPlacer
     private bool diagnosticLogged;
     private System.Numerics.Vector3 sentSpot;
     private int nearMeCount;
+    private Layout.Requirement pendingNeed;
+    private DateTime? previewSeenUtc;
+    private bool previewMoved;
+    private DateTime previewMovedUtc;
     private bool toastHooked;
 
     public bool Running => step != Step.Idle;
@@ -181,6 +201,7 @@ public sealed class UiPlacer
         {
             case Step.Ready: StepReady(profile); break;
             case Step.WaitMenuOpen: StepWaitMenuOpen(profile); break;
+            case Step.WaitPreview: StepWaitPreview(profile); break;
             case Step.WaitPlaced: StepWaitPlaced(profile); break;
             case Step.WaitMenuClosed: StepWaitMenuClosed(); break;
         }
@@ -273,16 +294,68 @@ public sealed class UiPlacer
             return;
         }
 
-        // Tell the game where to put it, the way pointing at the floor does, before choosing Place.
-        var (spot, rotation, what) = ChooseSpot(resolved.Value.Need);
-        if (!SetPlacementSpot(spot, rotation, out var previous))
+        // Don't choose Place yet: the game first spawns a preview of the item on the floor, and
+        // Place uses the preview's position. Wait for it.
+        pendingNeed = resolved.Value.Need;
+        previewSeenUtc = null;
+        previewMoved = false;
+        step = Step.WaitPreview;
+        stepStartedUtc = DateTime.UtcNow;
+    }
+
+    private unsafe void StepWaitPreview(UiPlaceProfile profile)
+    {
+        var name = ItemName(selectedItem);
+        if (!CallbackTap.IsVisible(profile.MenuAddon))
         {
-            Stop("Couldn't set where the item should go.");
+            Fail(selected, $"{name}: the menu closed before Place could be chosen.");
+            if (step != Step.Idle) { index++; step = Step.Ready; nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1); }
             return;
         }
-        Log($"  {name}: placing {what} at ({spot.X:0.00}, {spot.Y:0.00}, {spot.Z:0.00}) "
-            + $"(the game's remembered spot was ({previous.X:0.00}, {previous.Y:0.00}, {previous.Z:0.00})).");
-        sentSpot = spot;
+
+        var preview = Preview();
+        if (preview == null)
+        {
+            if (DateTime.UtcNow - stepStartedUtc > PreviewTimeout)
+            {
+                Fail(selected, $"{name}: the game didn't show a preview of the item, so Place wasn't chosen.");
+                if (step != Step.Idle) CloseAndNext(profile);
+            }
+            return;
+        }
+
+        // Let it settle for a moment after it appears, and never act faster than a person would,
+        // so a preview left over from an earlier item can't be mistaken for this one.
+        previewSeenUtc ??= DateTime.UtcNow;
+        if (DateTime.UtcNow - previewSeenUtc < PreviewSettle) return;
+        if (DateTime.UtcNow - stepStartedUtc < MinWaitAfterMenu) return;
+
+        var spotMode = plugin.Configuration.UiPlaceSpot;
+        if (spotMode != PlaceSpot.InFront && !previewMoved)
+        {
+            var (spot, rotation, what) = ChooseSpot(pendingNeed, spotMode);
+            if (!Sane(spot, rotation))
+            {
+                Fail(selected, $"{name}: the chosen spot looks wrong, so it wasn't used.");
+                if (step != Step.Idle) CloseAndNext(profile);
+                return;
+            }
+            preview->SetPosition(spot.X, spot.Y, spot.Z);
+            preview->SetRotation(rotation);
+            sentSpot = spot;
+            previewMoved = true;
+            previewMovedUtc = DateTime.UtcNow;
+            Log($"  {name}: moved the preview {what}, to ({spot.X:0.00}, {spot.Y:0.00}, {spot.Z:0.00}).");
+            return;
+        }
+        if (previewMoved && DateTime.UtcNow - previewMovedUtc < PreviewSettle) return;
+
+        var at = new System.Numerics.Vector3(preview->Position.X, preview->Position.Y, preview->Position.Z);
+        if (previewMoved && System.Numerics.Vector3.Distance(at, sentSpot) > MoveTolerance)
+            Log($"  {name}: the game moved the preview back to ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}); placing it there instead.");
+        if (!previewMoved)
+            Log($"  {name}: preview is in front of you at ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}).");
+        sentSpot = at;
 
         placedCountBefore = LiveInventory.CountItem(LiveInventory.InteriorPlaced, selectedItem);
         gameError = null;
@@ -296,6 +369,18 @@ public sealed class UiPlacer
         stepStartedUtc = DateTime.UtcNow;
     }
 
+    /// <summary>The preview object the game shows while an item is picked from the list.</summary>
+    private static unsafe FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* Preview()
+    {
+        var hm = HousingManager.Instance();
+        if (hm == null || hm->IndoorTerritory == null) return null;
+        return hm->IndoorTerritory->FurnitureManager.ObjectManager.ObjectArray.TempObject;
+    }
+
+    private static bool Sane(System.Numerics.Vector3 v, float r) =>
+        float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z) && float.IsFinite(r)
+        && MathF.Abs(v.X) < 500 && MathF.Abs(v.Y) < 500 && MathF.Abs(v.Z) < 500;
+
     private void StepWaitPlaced(UiPlaceProfile profile)
     {
         var stillThere = LiveInventory.TryGetSlot(selected.Container, selected.Slot, out var id, out var stain)
@@ -305,6 +390,7 @@ public sealed class UiPlacer
         if (!diagnosticLogged && DateTime.UtcNow - stepStartedUtc > DiagnosticDelay)
         {
             diagnosticLogged = true;
+            sentSpotForLog = sentSpot;
             Log(DescribeAim());
         }
 
@@ -325,17 +411,17 @@ public sealed class UiPlacer
         var refused = gameError != null && DateTime.UtcNow - stepStartedUtc > TimeSpan.FromSeconds(0.5);
         if (!refused && DateTime.UtcNow - stepStartedUtc <= PlaceTimeout) return;
 
-        if (!diagnosticLogged) { diagnosticLogged = true; Log(DescribeAim()); }
+        if (!diagnosticLogged) { diagnosticLogged = true; sentSpotForLog = sentSpot; Log(DescribeAim()); }
         var reason = gameError != null ? $"the game said \"{gameError}\"" : "the game didn't place it";
-        if (!plugin.Configuration.PlaceAtLayoutPosition) nearMeCount++; // try a fresh spot next time
+        if (plugin.Configuration.UiPlaceSpot == PlaceSpot.NearMe) nearMeCount++; // try a fresh spot next time
         Fail(selected, $"{ItemName(selectedItem)}: {reason}.");
         if (step == Step.Idle) return;
 
         // The same refusal twice in a row means it's the spot, not the item.
         if (gameError != null && gameError == previousGameError)
         {
-            Stop($"The game refused twice in a row (\"{gameError}\"). See the spot check lines in Activity: "
-                 + "if the game's spot doesn't match the one Refurnish set, setting the spot doesn't work this way.");
+            Stop($"The game refused twice in a row (\"{gameError}\"). The spot is probably blocked; "
+                 + "try \"Near me\", or stand somewhere more open.");
             return;
         }
         previousGameError = gameError;
@@ -420,14 +506,11 @@ public sealed class UiPlacer
         Log(Summary);
     }
 
-    /// <summary>
-    /// Where to put the next item: its final spot from the layout, or (if that option is off or the
-    /// layout has no position) a spot near you, spiralling outward so items don't land on each other.
-    /// </summary>
-    private (System.Numerics.Vector3 Spot, float Rotation, string What) ChooseSpot(Layout.Requirement need)
+    /// <summary>Where to put the next item when Refurnish chooses the spot.</summary>
+    private (System.Numerics.Vector3 Spot, float Rotation, string What) ChooseSpot(Layout.Requirement need, PlaceSpot mode)
     {
-        if (plugin.Configuration.PlaceAtLayoutPosition && need.HasPosition)
-            return (need.Position, need.Rotation, "at its layout spot");
+        if (mode == PlaceSpot.Layout && need.HasPosition)
+            return (need.Position, need.Rotation, "to its layout spot");
 
         var me = Plugin.ObjectTable.LocalPlayer;
         var center = me?.Position ?? System.Numerics.Vector3.Zero;
@@ -435,25 +518,12 @@ public sealed class UiPlacer
         var angle = k * 2.39996f; // golden angle, spreads spots evenly
         var radius = 1.5f + 0.6f * MathF.Sqrt(k);
         var spot = new System.Numerics.Vector3(center.X + radius * MathF.Cos(angle), center.Y, center.Z + radius * MathF.Sin(angle));
-        return (spot, 0f, "near you");
-    }
-
-    private static unsafe bool SetPlacementSpot(System.Numerics.Vector3 spot, float rotation, out System.Numerics.Vector3 previous)
-    {
-        previous = default;
-        var hm = HousingManager.Instance();
-        if (hm == null || hm->IndoorTerritory == null) return false;
-        if (!float.IsFinite(spot.X) || !float.IsFinite(spot.Y) || !float.IsFinite(spot.Z) || !float.IsFinite(rotation)) return false;
-        if (MathF.Abs(spot.X) > 500 || MathF.Abs(spot.Y) > 500 || MathF.Abs(spot.Z) > 500) return false;
-
-        var t = hm->IndoorTerritory;
-        previous = new System.Numerics.Vector3(t->StoreroomItemPlacePosition.X, t->StoreroomItemPlacePosition.Y, t->StoreroomItemPlacePosition.Z);
-        t->StoreroomItemPlacePosition = new FFXIVClientStructs.FFXIV.Common.Math.Vector3(spot.X, spot.Y, spot.Z);
-        t->StoreroomItemPlaceRotation = rotation;
-        return true;
+        return (spot, 0f, mode == PlaceSpot.Layout ? "near you (the layout has no position for it)" : "near you");
     }
 
     /// <summary>Where the game tried to put the item, where you are, and where the mouse is aiming.</summary>
+    private static System.Numerics.Vector3 sentSpotForLog;
+
     private static unsafe string DescribeAim()
     {
         var sb = new System.Text.StringBuilder("  Spot check: ");
@@ -461,7 +531,7 @@ public sealed class UiPlacer
         if (hm != null && hm->IndoorTerritory != null)
         {
             var p = hm->IndoorTerritory->StoreroomItemPlacePosition;
-            sb.Append($"game's placement spot now ({p.X:0.00}, {p.Y:0.00}, {p.Z:0.00})");
+            sb.Append($"game used ({p.X:0.00}, {p.Y:0.00}, {p.Z:0.00}), preview was at ({sentSpotForLog.X:0.00}, {sentSpotForLog.Y:0.00}, {sentSpotForLog.Z:0.00})");
         }
         var me = Plugin.ObjectTable.LocalPlayer;
         if (me != null) sb.Append($", you at ({me.Position.X:0.00}, {me.Position.Y:0.00}, {me.Position.Z:0.00})");

@@ -296,13 +296,23 @@ public sealed partial class MainWindow
 
             var problem = testProblem ?? placeProblem;
             if (problem != null) ImGui.TextColored(Warn, problem);
-            var atLayout = plugin.Configuration.PlaceAtLayoutPosition;
-            if (ImGui.RadioButton("At its spot in the layout##ui", atLayout)) { plugin.Configuration.PlaceAtLayoutPosition = true; plugin.Configuration.Save(); }
+            var spot = plugin.Configuration.UiPlaceSpot;
+            void SpotOption(string label, PlaceSpot value)
+            {
+                if (ImGui.RadioButton(label, spot == value)) { plugin.Configuration.UiPlaceSpot = value; plugin.Configuration.Save(); }
+            }
+            SpotOption("In front of me##ui", PlaceSpot.InFront);
             ImGui.SameLine();
-            if (ImGui.RadioButton("Near me##ui", !atLayout)) { plugin.Configuration.PlaceAtLayoutPosition = false; plugin.Configuration.Save(); }
-            ImGui.TextWrapped(atLayout
-                ? "Each item goes straight to its final position. Items that were already placed still need MakePlace to move them."
-                : "Items are spread around where you're standing, for MakePlace to arrange.");
+            SpotOption("Near me, spread out##ui", PlaceSpot.NearMe);
+            ImGui.SameLine();
+            SpotOption("At its spot in the layout##ui", PlaceSpot.Layout);
+            ImGui.TextWrapped(spot switch
+            {
+                PlaceSpot.InFront => "Each item goes where the game puts its preview: on the floor in front of you. "
+                                     + "Good for testing; for many items, step aside between them or use another option.",
+                PlaceSpot.NearMe => "Items are spread around where you're standing, for MakePlace to arrange.",
+                _ => "Each item goes straight to its final position. Items that were already placed still need MakePlace to move them.",
+            });
             ImGui.TextWrapped("Keep the furnishing window on its storeroom tab and don't click in it while Refurnish works. "
                               + "To stop, type /refurnish stop.");
         }

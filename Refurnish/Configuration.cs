@@ -22,6 +22,9 @@ public class Configuration : IPluginConfiguration
     /// <summary>Learned place messages, one per room and source (storeroom or inventory).</summary>
     public List<PlaceProfile> PlaceProfiles { get; set; } = new();
 
+    /// <summary>Where items placed through the furnishing window go.</summary>
+    public PlaceSpot UiPlaceSpot { get; set; } = PlaceSpot.InFront;
+
     /// <summary>Learned furnishing-window clicks for placing from the storeroom.</summary>
     public UiPlaceProfile? UiPlace { get; set; }
 
