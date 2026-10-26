@@ -269,7 +269,7 @@ public sealed partial class MainWindow
             if (countdown > 0)
                 ImGui.TextColored(Warn, $"Starting in {Math.Ceiling(countdown)}...");
             else
-                ImGui.TextColored(Warn, $"Working... placed {placer.Placed} so far{(placer.Pass > 1 ? " (second pass over missed items)" : "")}.");
+                ImGui.TextColored(Warn, $"Working... placed {placer.Placed} so far{(placer.Pass > 1 ? $" (pass {placer.Pass})" : "")}.");
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
             if (ImGui.Button("STOP##ui", new Vector2(-1, 32))) placer.Stop("Stopped by you.");
             ImGui.PopStyleColor();
@@ -323,7 +323,8 @@ public sealed partial class MainWindow
         {
             ImGui.TextUnformatted($"Place {fromRoom.Count} needed items from the storeroom?");
             ImGui.TextWrapped("Refurnish goes down the storeroom list, places what the layout needs and skips the rest. "
-                              + "Anything that fails is retried after the end of the list. It stops if anything unexpected happens.");
+                              + "With layout spots, floor-standing items go in first and things that sit on them follow in later passes. "
+                              + "It keeps going back to the top while passes still place something, and stops if anything unexpected happens.");
             if (ImGui.Button("Yes, place them##ui", new Vector2(150, 0)) && uiConfirmPending)
             {
                 uiConfirmPending = false;

@@ -53,8 +53,9 @@ public sealed class UiPlacer
     private static readonly TimeSpan PlaceTimeout = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan ReloadWait = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan FlagGrace = TimeSpan.FromSeconds(5);
-    private const int Passes = 2;
-    private const int MaxFailuresInARow = 10;
+    private const int MaxPasses = 10;              // keeps going back to the top while passes still place things
+    private const int MaxFailuresInARow = 30;
+    private const float GroundBand = 0.3f;          // spots this close to your floor count as "on the floor"
     private static readonly TimeSpan Countdown = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan DiagnosticDelay = TimeSpan.FromSeconds(0.4);
     private static readonly TimeSpan PreviewTimeout = TimeSpan.FromSeconds(3);
@@ -65,6 +66,8 @@ public sealed class UiPlacer
     private readonly Plugin plugin;
     private readonly List<string> log = new();
     private readonly HashSet<(int, int)> failedThisPass = new();
+    private readonly HashSet<(int, int)> deferred = new();   // higher items held back until the floor items are in
+    private int placedThisPass;
     private readonly Dictionary<(int, int), string> lastProblem = new();
 
     private Step step = Step.Idle;
@@ -147,6 +150,8 @@ public sealed class UiPlacer
         FinalFailures = 0;
         failuresInARow = 0;
         failedThisPass.Clear();
+        deferred.Clear();
+        placedThisPass = 0;
         lastProblem.Clear();
         noSpot.Clear();
         noSpotItems.Clear();
@@ -304,6 +309,20 @@ public sealed class UiPlacer
             return;
         }
 
+        // Layout mode: put floor-standing items (tables, partitions, lofts) in first. Anything higher
+        // usually sits on one of them, so it waits for the next pass. This isn't a failure.
+        if (mode == UiPlaceMode.All && plugin.Configuration.UiPlaceSpot == PlaceSpot.Layout && Pass == 1)
+        {
+            var t = LayoutTarget(resolved.Value.Need, heightShift, out _);
+            var me = Plugin.ObjectTable.LocalPlayer;
+            if (t != null && me != null && t.Value.Y > me.Position.Y + GroundBand)
+            {
+                deferred.Add(key);
+                CloseAndNext(profile);
+                return;
+            }
+        }
+
         if (!profile.MenuChoiceMatches(menu, out var found))
         {
             Fail(key, $"{name}: the menu entry to choose reads \"{found}\" instead of \"{profile.PlaceEntryText}\", so it wasn't chosen.");
@@ -399,8 +418,10 @@ public sealed class UiPlacer
         {
             if (spotMode == PlaceSpot.Layout)
             {
-                SkipNoSpot(name, $"the game wouldn't keep it at its layout spot (it moved it to ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}))");
-                CloseAndNext(profile);
+                // Usually the surface it sits on isn't placed yet; a later pass tries again.
+                Fail(selected, $"{name}: the game wouldn't keep it at its layout spot yet (moved it to ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00})); "
+                               + "will try again after more items are placed.");
+                if (step != Step.Idle) CloseAndNext(profile);
                 return;
             }
             Log($"  {name}: the game moved the preview back to ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}); placing it there instead.");
@@ -473,6 +494,7 @@ public sealed class UiPlacer
         if (!stillThere && placed)
         {
             Placed++;
+            placedThisPass++;
             failuresInARow = 0;
             previousGameError = null;
             spotTries = 0;
@@ -516,7 +538,9 @@ public sealed class UiPlacer
         if (step == Step.Idle) return;
 
         // The same refusal twice in a row means it's the spot, not the item.
-        if (gameError != null && gameError == previousGameError && plugin.Configuration.UiPlaceSpot != PlaceSpot.NearMe)
+        // (Only "in front of me" uses the same spot every time; in layout mode a refusal often just
+        // means the surface underneath isn't placed yet.)
+        if (gameError != null && gameError == previousGameError && plugin.Configuration.UiPlaceSpot == PlaceSpot.InFront)
         {
             Stop($"The game refused twice in a row (\"{gameError}\"). The spot is probably blocked; "
                  + "try \"Near me\", or stand somewhere more open.");
@@ -570,17 +594,27 @@ public sealed class UiPlacer
         if (mode == UiPlaceMode.Test) { Log("Test: the storeroom list looks empty."); Finish(); return; }
         if (mode == UiPlaceMode.One) { Log("Nothing in the storeroom list is needed by the layout."); Finish(); return; }
 
-        if (failedThisPass.Count > 0 && Pass < Passes)
+        // Go back to the top while that's still useful: some items were held back, or this pass placed
+        // something (which may be the table another item needs).
+        var remaining = failedThisPass.Count + deferred.Count;
+        if (remaining > 0 && Pass < MaxPasses && (placedThisPass > 0 || deferred.Count > 0))
         {
-            Log($"End of the list. Going back to the top for {failedThisPass.Count} missed item(s).");
+            Log($"End of pass {Pass}: placed {placedThisPass}. Going back to the top for {remaining} item(s) still to place.");
             Pass++;
             failedThisPass.Clear();
+            deferred.Clear();
+            placedThisPass = 0;
+            failuresInARow = 0;
             index = 0;
             step = Step.Ready;
             nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1);
             return;
         }
 
+        if (remaining > 0)
+            Log(Pass >= MaxPasses
+                ? $"Stopped after {MaxPasses} passes with {remaining} item(s) still unplaced."
+                : $"Pass {Pass} placed nothing new, so the {remaining} remaining item(s) can't be placed right now.");
         FinalFailures = failedThisPass.Count;
         Finish();
     }
