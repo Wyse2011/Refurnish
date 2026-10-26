@@ -98,7 +98,16 @@ only to the current game session (the window says so).
 
 Before every item Refurnish re-plans from a live read of the room, checks the slot still holds
 that exact item, checks there's a free furnishing slot and that the position is sensible, and
-afterwards waits for the item to actually appear in the room. Any problem stops the run.
+afterwards waits for the item to actually appear in the room.
+
+**If an item fails:** it gets a second try straight away. If that fails too, it's set aside and
+the run moves on to the next item. After the whole list, Refurnish goes back to the top and tries
+the set-aside items once more (two tries each). Anything still failing is marked with the reason.
+An item that left its slot but never appeared is not retried, since its state is unknown.
+
+The whole run still stops at once if you leave the room, the room runs out of furnishing slots,
+the game's connection can't be found, or six tries in a row fail (which points to a problem with
+everything rather than one item).
 
 ---
 

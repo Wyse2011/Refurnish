@@ -13,19 +13,34 @@ public readonly record struct PlaceJob(ulong HouseId, int Container, int Slot, u
 }
 
 /// <summary>
-/// Places furniture from the storeroom or your inventory, one item at a time. Before every item
-/// it re-plans from a live read (is it still needed, and where does it go?), checks the slot
-/// still holds that exact item, and checks a learned message exists for this room, source and game
-/// version. After sending, it waits for the game to confirm the item really was placed.
-/// Any failure or timeout stops the run; nothing is retried.
+/// Places furniture from the storeroom or your inventory, one item at a time.
+///
+/// Retry rules: each item gets two tries. If both fail, it's set aside and the run moves on.
+/// After the whole list, one more pass goes back over the items that were set aside, again with
+/// two tries each. Problems with the situation rather than the item (you left the room, the room
+/// is full, setup is missing, the network connection can't be found) stop everything at once, and
+/// so do six failed tries in a row, which means something is wrong with every item, not just one.
+///
+/// Before every try it re-plans from a live read (is it still needed, and where does it go?) and
+/// checks the slot still holds that exact item. After sending, it waits for the game to confirm
+/// the item was really placed. If an earlier try succeeded late, the re-plan notices and skips.
 /// </summary>
 public sealed class PlaceExecutor
 {
+    public const int TriesPerPass = 2;
+    public const int Passes = 2;
+    private const int MaxFailedTriesInARow = 6;
+
     private static readonly TimeSpan ConfirmTimeout = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan ClientWait = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PauseAfterFailure = TimeSpan.FromSeconds(2);
+
+    private enum Outcome { Ok, Skip, Retry, GiveUpOnItem, StopAll }
 
     private readonly Plugin plugin;
-    private readonly Queue<PlaceJob> queue = new();
+    private readonly List<PlaceJob> queue = new();      // front = next
+    private readonly List<PlaceJob> setAside = new();   // missed this pass, retried next pass
+    private readonly Dictionary<(int, int), int> triesThisPass = new();
     private readonly Dictionary<(int, int), (JobState State, string? Note)> states = new();
 
     private PlaceJob? current;
@@ -36,10 +51,14 @@ public sealed class PlaceExecutor
     private DateTime nextAllowedUtc = DateTime.MinValue;
     private DateTime waitingForClientSinceUtc = DateTime.MinValue;
     private bool holdingRecorder;
+    private int failedTriesInARow;
 
     public bool Running => current != null || queue.Count > 0;
+    public int Pass { get; private set; } = 1;
     public int DoneThisRun { get; private set; }
     public int TotalThisRun { get; private set; }
+    public int SetAsideCount => setAside.Count;
+    public int FinalFailures { get; private set; }
     public string? StopReason { get; private set; }
 
     public PlaceExecutor(Plugin plugin) => this.plugin = plugin;
@@ -57,17 +76,21 @@ public sealed class PlaceExecutor
     {
         if (!Running)
         {
-            foreach (var key in states.Where(kv => kv.Value.State is JobState.Done or JobState.Failed).Select(kv => kv.Key).ToList())
-                states.Remove(key);
+            states.Clear();
+            setAside.Clear();
+            triesThisPass.Clear();
+            Pass = 1;
             DoneThisRun = 0;
             TotalThisRun = 0;
+            FinalFailures = 0;
+            failedTriesInARow = 0;
             StopReason = null;
         }
 
         foreach (var job in jobs)
         {
-            if (states.TryGetValue(job.SlotKey, out var s) && s.State is JobState.Queued or JobState.Working) continue;
-            queue.Enqueue(job);
+            if (queue.Any(q => q.SlotKey == job.SlotKey) || current?.SlotKey == job.SlotKey) continue;
+            queue.Add(job);
             states[job.SlotKey] = (JobState.Queued, null);
             TotalThisRun++;
         }
@@ -82,8 +105,11 @@ public sealed class PlaceExecutor
 
     public void Stop(string reason)
     {
-        foreach (var job in queue) states.Remove(job.SlotKey);
+        foreach (var job in queue.Concat(setAside))
+            if (states.TryGetValue(job.SlotKey, out var s) && s.State != JobState.Failed)
+                states.Remove(job.SlotKey);
         queue.Clear();
+        setAside.Clear();
         if (current != null)
         {
             states[current.Value.SlotKey] = (JobState.Failed, "Stopped while this item was being placed. Check it in game.");
@@ -110,8 +136,11 @@ public sealed class PlaceExecutor
 
         if (queue.Count == 0)
         {
-            ReleaseRecorder();
-            return;
+            if (!StartNextPassIfNeeded())
+            {
+                ReleaseRecorder();
+                return;
+            }
         }
         if (DateTime.UtcNow < nextAllowedUtc) return;
 
@@ -122,12 +151,13 @@ public sealed class PlaceExecutor
             return;
         }
 
-        var job = queue.Dequeue();
-        var problem = Preflight(job, out var profile, out var target, out var position, out var rotation, out var skipOnly);
-        if (problem != null)
+        var job = queue[0];
+        queue.RemoveAt(0);
+
+        var outcome = Preflight(job, out var message, out var profile, out var target, out var position, out var rotation);
+        if (outcome != Outcome.Ok)
         {
-            states[job.SlotKey] = (JobState.Failed, problem);
-            if (!skipOnly) Stop(problem);
+            Handle(job, outcome, message!);
             return;
         }
 
@@ -146,9 +176,7 @@ public sealed class PlaceExecutor
         }
         if (!sent)
         {
-            const string msg = "Couldn't send the request. Stopped.";
-            states[job.SlotKey] = (JobState.Failed, msg);
-            Stop(msg);
+            Handle(job, Outcome.StopAll, "Couldn't send the request through the game's connection.");
             return;
         }
 
@@ -156,45 +184,130 @@ public sealed class PlaceExecutor
         currentContainer = target.Container;
         currentSlot = target.Slot;
         sentUtc = DateTime.UtcNow;
-        states[job.SlotKey] = (JobState.Working, null);
+        var tryNo = triesThisPass.GetValueOrDefault(job.SlotKey) + 1;
+        states[job.SlotKey] = (JobState.Working, tryNo > 1 ? $"Placing (try {tryNo})..." : null);
     }
 
-    private string? Preflight(PlaceJob job, out PlaceProfile? profile, out (int Container, int Slot) target,
-        out Vector3 position, out float rotation, out bool skipOnly)
+    /// <summary>When a pass ends with items set aside, go back to the top with just those.</summary>
+    private bool StartNextPassIfNeeded()
     {
+        if (setAside.Count == 0) return false;
+
+        if (Pass >= Passes)
+        {
+            foreach (var job in setAside)
+            {
+                states[job.SlotKey] = (JobState.Failed, states.TryGetValue(job.SlotKey, out var s) && s.Note != null
+                    ? $"Couldn't place after {Passes} passes. Last problem: {s.Note}"
+                    : $"Couldn't place after {Passes} passes.");
+                FinalFailures++;
+            }
+            setAside.Clear();
+            return false;
+        }
+
+        Pass++;
+        queue.AddRange(setAside);
+        foreach (var job in setAside)
+            states[job.SlotKey] = (JobState.Queued, states.TryGetValue(job.SlotKey, out var s) ? s.Note : null);
+        setAside.Clear();
+        triesThisPass.Clear();
+        nextAllowedUtc = DateTime.UtcNow + PauseAfterFailure;
+        return true;
+    }
+
+    private void Handle(PlaceJob job, Outcome outcome, string message)
+    {
+        switch (outcome)
+        {
+            case Outcome.Skip:
+                states[job.SlotKey] = (JobState.Done, message);
+                return;
+
+            case Outcome.StopAll:
+                states[job.SlotKey] = (JobState.Failed, message);
+                Stop(message);
+                return;
+
+            case Outcome.GiveUpOnItem:
+                // Retrying wouldn't change anything for this item; carry on with the rest.
+                states[job.SlotKey] = (JobState.Failed, message);
+                FinalFailures++;
+                CountFailedTry();
+                return;
+
+            case Outcome.Retry:
+                var tries = triesThisPass.GetValueOrDefault(job.SlotKey) + 1;
+                triesThisPass[job.SlotKey] = tries;
+                nextAllowedUtc = DateTime.UtcNow + PauseAfterFailure;
+                if (!CountFailedTry()) return;
+
+                if (tries < TriesPerPass)
+                {
+                    queue.Insert(0, job); // second try straight away
+                    states[job.SlotKey] = (JobState.Queued, $"Retrying: {message}");
+                }
+                else
+                {
+                    setAside.Add(job);
+                    states[job.SlotKey] = Pass < Passes
+                        ? (JobState.Queued, $"Missed, will retry after the others: {message}")
+                        : (JobState.Queued, message);
+                }
+                return;
+        }
+    }
+
+    /// <summary>Counts a failed try; stops everything if too many fail in a row. Returns false if stopped.</summary>
+    private bool CountFailedTry()
+    {
+        failedTriesInARow++;
+        if (failedTriesInARow < MaxFailedTriesInARow) return true;
+        Stop($"{MaxFailedTriesInARow} tries in a row failed, so something is wrong beyond a single item. Stopped.");
+        return false;
+    }
+
+    private Outcome Preflight(PlaceJob job, out string? message, out PlaceProfile? profile, out (int Container, int Slot) target,
+        out Vector3 position, out float rotation)
+    {
+        message = null;
         profile = null;
         target = (job.Container, job.Slot);
         position = default;
         rotation = 0;
-        skipOnly = false;
 
-        if (!Plugin.PlayerState.IsLoaded) return "You're not logged in.";
-        if (plugin.Scanner.CurrentHouseId != job.HouseId) return "You're not inside the room this plan is for.";
-        if (plugin.Learner.Active || plugin.PlaceLearner.Active) return "Learning is active. Finish or cancel it first.";
-        if (plugin.Executor.Running) return "Storing is running. Wait for it to finish.";
+        // Situation problems: no point continuing with any item.
+        if (!Plugin.PlayerState.IsLoaded) { message = "You're not logged in."; return Outcome.StopAll; }
+        if (plugin.Scanner.CurrentHouseId != job.HouseId) { message = "You're not inside the room this plan is for."; return Outcome.StopAll; }
+        if (plugin.Learner.Active || plugin.PlaceLearner.Active) { message = "Learning is active. Finish or cancel it first."; return Outcome.StopAll; }
+        if (plugin.Executor.Running) { message = "Storing is running. Wait for it to finish."; return Outcome.StopAll; }
+        if (LiveInventory.FreeSlots(LiveInventory.InteriorPlaced) == 0) { message = "This room has no free furnishing slots."; return Outcome.StopAll; }
 
         var source = SourceOf(job.Container);
         profile = ProfileFor(job.HouseId, source);
         if (profile == null)
-            return source == PlaceSource.Storeroom
-                ? "Placing from the storeroom isn't set up for this room yet. Use Learn first."
-                : "Placing from your inventory isn't set up for this room yet. Use Learn first.";
+        {
+            message = source == PlaceSource.Storeroom
+                ? "Placing from the storeroom isn't set up for this room. Use Learn first."
+                : "Placing from your inventory isn't set up for this room. Use Learn first.";
+            return Outcome.GiveUpOnItem; // other items may come from the source that is set up
+        }
 
         var cache = plugin.Cache.TryGet(Plugin.PlayerState.ContentId);
         var resolved = LiveStoreResolver.ResolvePlace(plugin.MainWindow.CurrentLayout, cache, job);
         if (resolved == null)
         {
-            skipOnly = true;
-            return "The layout no longer needs this item (or it was already placed), so it was skipped.";
+            message = "Already placed, or no longer needed.";
+            return Outcome.Skip;
         }
 
         target = (resolved.Value.Container, resolved.Value.Slot);
         if (!LiveInventory.TryGetSlot(target.Container, target.Slot, out var itemId, out var stain)
             || itemId != job.ItemId || stain != job.Stain)
-            return "The item moved while checking. Refresh and try again.";
-
-        if (LiveInventory.FreeSlots(LiveInventory.InteriorPlaced) == 0)
-            return "This room has no free furnishing slots.";
+        {
+            message = "The item moved while checking.";
+            return Outcome.Retry;
+        }
 
         if (plugin.Configuration.PlaceAtLayoutPosition && resolved.Value.Need.HasPosition)
         {
@@ -204,16 +317,19 @@ public sealed class PlaceExecutor
         else
         {
             var me = Plugin.ObjectTable.LocalPlayer;
-            if (me == null) return "Couldn't find your character's position.";
+            if (me == null) { message = "Couldn't find your character's position."; return Outcome.Retry; }
             position = me.Position;
             rotation = 0;
         }
 
         if (!float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z)
             || Math.Abs(position.X) > 500 || Math.Abs(position.Y) > 500 || Math.Abs(position.Z) > 500)
-            return "The position for this item looks wrong, so it wasn't sent.";
+        {
+            message = "The position for this item looks wrong, so it wasn't sent.";
+            return Outcome.GiveUpOnItem;
+        }
 
-        return null;
+        return Outcome.Ok;
     }
 
     private void CheckCurrent()
@@ -237,18 +353,23 @@ public sealed class PlaceExecutor
             states[job.SlotKey] = (JobState.Done, "Placed");
             current = null;
             DoneThisRun++;
+            failedTriesInARow = 0;
             nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(Math.Max(0.5, plugin.Configuration.StoreDelaySeconds));
             return;
         }
 
-        if (DateTime.UtcNow - sentUtc > ConfirmTimeout)
+        if (DateTime.UtcNow - sentUtc <= ConfirmTimeout) return;
+
+        current = null;
+        if (stillThere)
         {
-            var msg = stillThere
-                ? "The game didn't place the item (it may not fit there). Stopped so nothing else is attempted."
-                : "The item left its slot but didn't appear in the room. Stopped; check your storeroom and inventory.";
-            states[job.SlotKey] = (JobState.Failed, msg);
-            current = null;
-            Stop(msg);
+            // The game simply didn't take it (often a spot it won't allow). Safe to try again.
+            Handle(job, Outcome.Retry, "The game didn't place it.");
+        }
+        else
+        {
+            // It left its slot but never showed up: don't resend for something in an unknown state.
+            Handle(job, Outcome.GiveUpOnItem, "It left its slot but didn't appear in the room. Check your storeroom and inventory.");
         }
     }
 

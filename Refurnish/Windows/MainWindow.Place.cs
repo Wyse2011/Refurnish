@@ -97,7 +97,10 @@ public sealed partial class MainWindow
         if (placer.Running)
         {
             var total = Math.Max(1, placer.TotalThisRun);
-            ImGui.ProgressBar((float)placer.DoneThisRun / total, new Vector2(-1, 0), $"Placing {placer.DoneThisRun} of {placer.TotalThisRun}");
+            var passText = placer.Pass > 1 ? $"  -  second pass over missed items" : "";
+            ImGui.ProgressBar((float)placer.DoneThisRun / total, new Vector2(-1, 0), $"Placed {placer.DoneThisRun} of {placer.TotalThisRun}{passText}");
+            if (placer.SetAsideCount > 0)
+                ImGui.TextColored(Warn, $"{placer.SetAsideCount} missed so far; they'll be tried again after the rest.");
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
             if (ImGui.Button("STOP##place", new Vector2(-1, 32))) placer.Stop("Stopped by you.");
             ImGui.PopStyleColor();
@@ -122,7 +125,15 @@ public sealed partial class MainWindow
         DrawPlaceConfirm(selected);
 
         if (placer.StopReason != null) ImGui.TextColored(Bad, $"Stopped: {placer.StopReason}");
-        else if (!placer.Running && placer.DoneThisRun > 0) ImGui.TextColored(Good, $"Done. Placed {placer.DoneThisRun} items.");
+        else if (!placer.Running && placer.TotalThisRun > 0)
+        {
+            ImGui.TextColored(Good, $"Done. Placed {placer.DoneThisRun} items.");
+            if (placer.FinalFailures > 0)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(Bad, $"{placer.FinalFailures} couldn't be placed (hover their status for why).");
+            }
+        }
 
         // ---- Rows ----
         if (!ImGui.BeginTable("##placeRows", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
@@ -165,9 +176,18 @@ public sealed partial class MainWindow
             {
                 var (st, note) = state.Value;
                 var color = st switch { JobState.Done => Good, JobState.Failed => Bad, _ => Warn };
-                var text = st switch { JobState.Queued => "Queued", JobState.Working => "Placing...", JobState.Done => "Placed", _ => "Failed" };
+                var text = st switch
+                {
+                    JobState.Queued when note == null => "Queued",
+                    JobState.Queued when note.StartsWith("Missed") => "Missed, retrying later",
+                    JobState.Queued => "Retrying",
+                    JobState.Working => note ?? "Placing...",
+                    JobState.Done when note is null or "Placed" => "Placed",
+                    JobState.Done => "Skipped",
+                    _ => "Failed",
+                };
                 ImGui.TextColored(color, text);
-                if (note != null && st == JobState.Failed && ImGui.IsItemHovered()) ImGui.SetTooltip(note);
+                if (note != null && ImGui.IsItemHovered()) ImGui.SetTooltip(note);
             }
 
             ImGui.TableNextColumn();
@@ -196,7 +216,9 @@ public sealed partial class MainWindow
             : "Each is dropped where you're standing.");
         if (free >= 0 && selected.Count > free)
             ImGui.TextColored(Warn, $"This room only has about {free} free furnishing slots. It will stop when full.");
-        ImGui.TextWrapped("Each item is re-checked before it's placed, and the run stops at the first problem.");
+        ImGui.TextWrapped($"Each item is re-checked before it's placed and gets {PlaceExecutor.TriesPerPass} tries. "
+                          + "Items that still fail are set aside and tried once more after the rest. "
+                          + "It stops completely if you leave the room, the room is full, or several tries fail in a row.");
         ImGui.Spacing();
 
         if (ImGui.Button("Yes, place them", new Vector2(150, 0)) && placeConfirmPending)
