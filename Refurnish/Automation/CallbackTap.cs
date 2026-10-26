@@ -50,6 +50,9 @@ public sealed unsafe class CallbackTap : IDisposable
     private readonly Hook<FireCallbackDelegate>? hook;
     private int users;
 
+    /// <summary>True while Refurnish itself is clicking, so recordings can tell its clicks from yours.</summary>
+    public static bool RefurnishClicking { get; private set; }
+
     public event Action<CbEvent>? Seen;
     public string? SetupError { get; }
 
@@ -82,7 +85,8 @@ public sealed unsafe class CallbackTap : IDisposable
                 var name = self->NameString;
                 var menu = name == "ContextMenu" ? ReadStrings(self) : new List<string>();
                 var (c, s) = StoreroomSelection();
-                var display = $"CALLBACK {name} close={close} values=[{string.Join(", ", vals.Select((v, i) => Describe(values[i], v)))}]";
+                var who = RefurnishClicking ? "[Refurnish] " : "[you] ";
+                var display = $"{who}CALLBACK {name} close={close} values=[{string.Join(", ", vals.Select((v, i) => Describe(values[i], v)))}]";
                 Seen.Invoke(new CbEvent(DateTime.UtcNow, name, vals, close, menu, c, s, display));
             }
         }
@@ -167,7 +171,15 @@ public sealed unsafe class CallbackTap : IDisposable
                 ptr[i].Type = (AtkValueType)values[i].Type;
                 ptr[i].Int64 = values[i].Raw;
             }
-            a->FireCallback((uint)values.Length, ptr, close);
+            RefurnishClicking = true;
+            try
+            {
+                a->FireCallback((uint)values.Length, ptr, close);
+            }
+            finally
+            {
+                RefurnishClicking = false;
+            }
             return true;
         }
         finally

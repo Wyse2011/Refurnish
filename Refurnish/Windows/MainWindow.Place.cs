@@ -362,11 +362,12 @@ public sealed partial class MainWindow
         ImGui.TextColored(Warn, "Placement test (recording only)");
         ImGui.TextWrapped("This only watches; it never sends anything to the game. It records what the game itself does "
                           + "while you place an item by hand, so placing can be rebuilt on the game's own steps.");
-        ImGui.TextWrapped("1. Press Start recording.\n"
-                          + "2. Open the furnishing window, go to the storeroom tab, pick up one item, and place it anywhere.\n"
-                          + "3. Pick up a second item, then press Escape to cancel instead of placing it.\n"
-                          + "4. Press Stop, then Copy log, and paste it into the chat.");
-
+        ImGui.TextWrapped("Side-by-side test (Refurnish's attempt, then yours):");
+        ImGui.TextWrapped("1. Open the furnishing window on its storeroom tab, then press Start recording here.");
+        ImGui.TextWrapped("2. Go to the Retrieve tab and press Place one (Near me). Wait until it says the game refused.");
+        ImGui.TextWrapped("3. Now place one item yourself: click it in the storeroom list, choose Place, and set it down on the floor.");
+        ImGui.TextWrapped("4. Come back here, press Stop, then Copy log, and paste it into the chat.");
+        ImGui.TextDisabled("Recording keeps going while you switch tabs. It only watches; it never sends anything.");
         if (rec.SetupError != null) { ImGui.TextColored(Bad, rec.SetupError); return; }
 
         if (rec.Recording)

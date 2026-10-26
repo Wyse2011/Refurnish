@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Text.SeStringHandling;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Refurnish.Inventory;
 
@@ -47,6 +49,7 @@ public sealed unsafe class PlacementRecorder : IDisposable
             + $"Storeroom items {lastRoom}, inventory items {lastBag}, placed {lastPlaced}.");
         tap.Seen += OnCallback;
         tap.Acquire();
+        Plugin.ToastGui.ErrorToast += OnErrorToast;
     }
 
     public void Stop()
@@ -54,6 +57,7 @@ public sealed unsafe class PlacementRecorder : IDisposable
         if (!Recording) return;
         tap.Seen -= OnCallback;
         tap.Release();
+        Plugin.ToastGui.ErrorToast -= OnErrorToast;
         Recording = false;
         Add("Recording stopped.");
     }
@@ -84,7 +88,7 @@ public sealed unsafe class PlacementRecorder : IDisposable
         var (room, bag, placed) = Counts();
         if (room != lastRoom || bag != lastBag || placed != lastPlaced)
         {
-            Add($"ITEMS storeroom {lastRoom}->{room}, inventory {lastBag}->{bag}, placed {lastPlaced}->{placed}");
+            Add($"ITEMS storeroom {lastRoom}->{room}, inventory {lastBag}->{bag}, placed {lastPlaced}->{placed} | {Aim()}");
             (lastRoom, lastBag, lastPlaced) = (room, bag, placed);
         }
     }
@@ -112,8 +116,11 @@ public sealed unsafe class PlacementRecorder : IDisposable
             sb.Append($" storeroomSel={(int)indoor->StoreroomItemInventoryType}/{indoor->StoreroomItemInventorySlot}");
             var p = indoor->StoreroomItemPlacePosition;
             sb.Append($" storeroomPos=({p.X:0.00},{p.Y:0.00},{p.Z:0.00}) rot={indoor->StoreroomItemPlaceRotation:0.00}");
-            sb.Append($" moving={(indoor->MovingHousingObject != null ? "yes" : "no")}");
-            sb.Append($" targeted={(indoor->TargetedHousingObject != null ? "yes" : "no")}");
+            sb.Append($" moving={Obj((nint)indoor->MovingHousingObject)}");
+            sb.Append($" targeted={Obj((nint)indoor->TargetedHousingObject)}");
+            sb.Append($" hovered={Obj((nint)indoor->HoveredHousingObject)}");
+            // The preview object that follows the cursor while an item is held.
+            sb.Append($" preview={Obj((nint)indoor->FurnitureManager.ObjectManager.ObjectArray.TempObject)}");
             sb.Append($" showStoreroomTab={indoor->ShowStoreroomTab}");
         }
 
@@ -122,9 +129,32 @@ public sealed unsafe class PlacementRecorder : IDisposable
         return sb.ToString();
     }
 
+    private void OnErrorToast(ref SeString message, ref bool isHandled)
+    {
+        if (Recording) Add($"GAME MESSAGE \"{message.TextValue}\" | {Aim()}");
+    }
+
+    /// <summary>Position of a housing object, rounded so small cursor wobbles don't flood the log.</summary>
+    private static string Obj(nint address)
+    {
+        if (address == 0) return "none";
+        var o = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
+        static float R(float v) => MathF.Round(v * 2) / 2;
+        return $"({R(o->Position.X):0.0},{R(o->Position.Y):0.0},{R(o->Position.Z):0.0})";
+    }
+
+    private static string Aim()
+    {
+        var me = Plugin.ObjectTable.LocalPlayer;
+        var you = me != null ? $"you ({me.Position.X:0.00},{me.Position.Y:0.00},{me.Position.Z:0.00})" : "you ?";
+        return Plugin.GameGui.ScreenToWorld(ImGui.GetMousePos(), out var a)
+            ? $"{you}, mouse aiming at ({a.X:0.00},{a.Y:0.00},{a.Z:0.00})"
+            : $"{you}, mouse not over the room";
+    }
+
     private void OnCallback(CbEvent e)
     {
-        if (Recording) Add(e.Display + (e.MenuStrings.Count > 0 ? $" menu=[{string.Join(" | ", e.MenuStrings)}]" : ""));
+        if (Recording) Add(e.Display + (e.MenuStrings.Count > 0 ? $" menu=[{string.Join(" | ", e.MenuStrings)}]" : "") + $" | {Aim()}");
     }
 
     private void Add(string line)
