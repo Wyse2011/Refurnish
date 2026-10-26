@@ -94,6 +94,8 @@ public sealed class UiPlacer
     private const float Clearance = 0.9f;
     private Layout.Requirement pendingNeed;
     private float heightShift; // added to layout heights when "match this floor" is on
+    private readonly HashSet<(int, int)> noSpot = new();      // items whose layout spot can't be used; left in the storeroom
+    private readonly List<string> noSpotItems = new();
     private DateTime? previewSeenUtc;
     private bool previewMoved;
     private DateTime previewMovedUtc;
@@ -105,6 +107,9 @@ public sealed class UiPlacer
     public int FinalFailures { get; private set; }
     public string? StopReason { get; private set; }
     public string? Summary { get; private set; }
+
+    /// <summary>Items left in the storeroom because their layout spot couldn't be used (last run).</summary>
+    public IReadOnlyList<string> NoSpotItems => noSpotItems;
 
     /// <summary>Seconds left before the first click, so you can aim the mouse at open floor.</summary>
     public double CountdownLeft => step == Step.Ready && Placed == 0 && index == 0 && Pass == 1
@@ -143,6 +148,8 @@ public sealed class UiPlacer
         failuresInARow = 0;
         failedThisPass.Clear();
         lastProblem.Clear();
+        noSpot.Clear();
+        noSpotItems.Clear();
         log.Clear();
         StopReason = null;
         Summary = null;
@@ -286,7 +293,7 @@ public sealed class UiPlacer
         }
 
         var key = selected;
-        if (failedThisPass.Contains(key)) { CloseAndNext(profile); return; }
+        if (failedThisPass.Contains(key) || noSpot.Contains(key)) { CloseAndNext(profile); return; }
 
         var cache = plugin.Cache.TryGet(Plugin.PlayerState.ContentId);
         var job = new PlaceJob(houseId, selected.Container, selected.Slot, selectedItem, selectedStain);
@@ -341,6 +348,27 @@ public sealed class UiPlacer
         if (DateTime.UtcNow - stepStartedUtc < MinWaitAfterMenu) return;
 
         var spotMode = plugin.Configuration.UiPlaceSpot;
+
+        // "At its spot in the layout" means exactly that: if the spot can't be used, the item stays
+        // in the storeroom (listed afterwards) rather than being dropped somewhere else.
+        if (spotMode == PlaceSpot.Layout && !previewMoved)
+        {
+            var target = LayoutTarget(pendingNeed, heightShift, out var why);
+            if (target == null)
+            {
+                SkipNoSpot(name, why);
+                CloseAndNext(profile);
+                return;
+            }
+            preview->SetPosition(target.Value.X, target.Value.Y, target.Value.Z);
+            preview->SetRotation(pendingNeed.Rotation);
+            sentSpot = target.Value;
+            previewMoved = true;
+            previewMovedUtc = DateTime.UtcNow;
+            Log($"  {name}: moved the preview to its layout spot ({target.Value.X:0.00}, {target.Value.Y:0.00}, {target.Value.Z:0.00}).");
+            return;
+        }
+
         if (spotMode != PlaceSpot.InFront && !previewMoved)
         {
             var (spot, rotation, what) = ChooseSpot(pendingNeed, spotMode);
@@ -368,7 +396,15 @@ public sealed class UiPlacer
 
         var at = new System.Numerics.Vector3(preview->Position.X, preview->Position.Y, preview->Position.Z);
         if (previewMoved && System.Numerics.Vector3.Distance(at, sentSpot) > MoveTolerance)
+        {
+            if (spotMode == PlaceSpot.Layout)
+            {
+                SkipNoSpot(name, $"the game wouldn't keep it at its layout spot (it moved it to ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}))");
+                CloseAndNext(profile);
+                return;
+            }
             Log($"  {name}: the game moved the preview back to ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}); placing it there instead.");
+        }
         if (!previewMoved)
             Log($"  {name}: preview is in front of you at ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}).");
         sentSpot = at;
@@ -391,7 +427,7 @@ public sealed class UiPlacer
     /// of your feet and the furniture already here, nor more than 6 units above the highest of them
     /// (enough for wall-mounted items and stacking).
     /// </summary>
-    private static bool FitsThisRoom(float y, out string why)
+    public static bool FitsThisRoom(float y, out string why)
     {
         // Compare with the floor you're standing on. (Furniture can't be trusted for the low end:
         // something placed oddly in the past could be sitting below the floor.)
@@ -562,10 +598,32 @@ public sealed class UiPlacer
     {
         step = Step.Idle;
         Unhook();
+        var leftover = noSpotItems.Count > 0 ? $" {noSpotItems.Count} stayed in the storeroom because their layout spot couldn't be used." : "";
         Summary = mode == UiPlaceMode.Test
             ? "Test finished."
-            : FinalFailures > 0 ? $"Done. Placed {Placed}; {FinalFailures} couldn't be placed (see the log)." : $"Done. Placed {Placed}.";
+            : (FinalFailures > 0 ? $"Done. Placed {Placed}; {FinalFailures} couldn't be placed (see the log)." : $"Done. Placed {Placed}.") + leftover;
         Log(Summary);
+    }
+
+    /// <summary>Leaves an item in the storeroom because its layout spot can't be used. Not a malfunction, so it doesn't count toward stopping.</summary>
+    private void SkipNoSpot(string name, string why)
+    {
+        noSpot.Add(selected);
+        noSpotItems.Add($"{name}: {why}");
+        Log($"  {name}: left in the storeroom; {why}.");
+    }
+
+    /// <summary>
+    /// The item's layout spot (with the floor shift applied), or null with the reason if it can't be
+    /// used here: the layout has no position for it, or the spot is below your floor or far above the room.
+    /// </summary>
+    public static System.Numerics.Vector3? LayoutTarget(Layout.Requirement need, float shift, out string why)
+    {
+        if (!need.HasPosition) { why = "the layout has no position for it"; return null; }
+        var target = need.Position + new System.Numerics.Vector3(0, shift, 0);
+        if (!FitsThisRoom(target.Y, out why)) return null;
+        if (!Sane(target, need.Rotation)) { why = "its layout spot looks wrong"; return null; }
+        return target;
     }
 
     /// <summary>Where to put the next item when Refurnish chooses the spot.</summary>

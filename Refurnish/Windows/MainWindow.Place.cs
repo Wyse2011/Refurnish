@@ -311,7 +311,8 @@ public sealed partial class MainWindow
                 PlaceSpot.InFront => "Each item goes where the game puts its preview: on the floor in front of you. "
                                      + "Good for testing; for many items, step aside between them or use another option.",
                 PlaceSpot.NearMe => "Items are spread around where you're standing, for MakePlace to arrange.",
-                _ => "Each item goes straight to its final position. Items that were already placed still need MakePlace to move them.",
+                _ => "Each item goes straight to its final position. If an item's spot can't be used here, it stays in the storeroom "
+                     + "and is listed afterwards. Items that were already placed still need MakePlace to move them.",
             });
             if (spot == PlaceSpot.Layout) DrawHeightCheck();
             ImGui.TextWrapped("Keep the furnishing window on its storeroom tab and don't click in it while Refurnish works. "
@@ -344,6 +345,25 @@ public sealed partial class MainWindow
 
         if (placer.StopReason != null && !placer.Running) ImGui.TextColored(Bad, $"Stopped: {placer.StopReason}");
         else if (placer.Summary != null && !placer.Running) ImGui.TextColored(placer.FinalFailures > 0 ? Warn : Good, placer.Summary);
+
+        if (!placer.Running && placer.NoSpotItems.Count > 0)
+        {
+            if (ImGui.TreeNodeEx($"Left in the storeroom: {placer.NoSpotItems.Count} (their layout spot couldn't be used)###uiNoSpot"))
+            {
+                foreach (var line in placer.NoSpotItems) ImGui.BulletText(line);
+                ImGui.TreePop();
+            }
+            ImGui.BeginDisabled(placer.CanStart(selectedHouse, UiPlaceMode.All) != null);
+            if (ImGui.SmallButton("Place what's left near me##uiLeftovers"))
+            {
+                plugin.Configuration.UiPlaceSpot = PlaceSpot.NearMe;
+                plugin.Configuration.Save();
+                placer.Start(selectedHouse, UiPlaceMode.All);
+            }
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("Switches to \"Near me, spread out\" and places everything still needed from the storeroom, for MakePlace to arrange.");
+        }
 
         var recent = placer.RecentLog(12);
         if (recent.Count > 0 && ImGui.TreeNodeEx("Activity###uiPlaceLog", ImGuiTreeNodeFlags.DefaultOpen))

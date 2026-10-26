@@ -75,8 +75,9 @@ public sealed class LoadedLayout
     }
 
     /// <summary>
-    /// The layout's floor height: the height most of its items share (things standing on the floor
-    /// all sit at exactly the floor's height). Null if the layout has no positions.
+    /// The layout's floor height: the lowest height that a good number of its items share. Things
+    /// standing on the floor all sit at exactly the floor's height; items on lofts or tables share
+    /// higher heights, so the lowest well-used height is the floor. Null if there are no positions.
     /// </summary>
     public float? FloorHeight
     {
@@ -84,7 +85,10 @@ public sealed class LoadedLayout
         {
             var ys = Interior.Where(r => r.HasPosition).Select(r => MathF.Round(r.Position.Y * 20) / 20).ToList();
             if (ys.Count == 0) return null;
-            return ys.GroupBy(y => y).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).First().Key;
+            var groups = ys.GroupBy(y => y).Select(g => (Height: g.Key, Count: g.Count())).ToList();
+            var needed = Math.Max(3, (int)MathF.Ceiling(ys.Count * 0.05f));
+            var floor = groups.Where(g => g.Count >= needed).OrderBy(g => g.Height).Select(g => (float?)g.Height).FirstOrDefault();
+            return floor ?? groups.OrderByDescending(g => g.Count).ThenBy(g => g.Height).First().Height;
         }
     }
 

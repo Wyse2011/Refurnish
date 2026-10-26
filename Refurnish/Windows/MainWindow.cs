@@ -287,7 +287,9 @@ public sealed partial class MainWindow : Window
     {
         var floor = layout?.FloorHeight;
         var me = Plugin.ObjectTable.LocalPlayer;
-        if (!plugin.Configuration.MatchLayoutFloor || floor == null || me == null) return 0;
+        if (!plugin.Configuration.MatchLayoutFloor) return 0;
+        if (plugin.Configuration.LayoutShiftOverride is { } manual) return manual;
+        if (floor == null || me == null) return 0;
         return me.Position.Y - floor.Value;
     }
 
@@ -300,9 +302,10 @@ public sealed partial class MainWindow : Window
 
         var floor = me.Position.Y;
         var diff = floor - layoutFloor.Value;
-        if (MathF.Abs(diff) < 0.25f)
+        if (MathF.Abs(diff) < 0.25f && !plugin.Configuration.MatchLayoutFloor)
         {
             ImGui.TextColored(Good, $"This layout's floor ({layoutFloor:0.00}) matches the floor you're on ({floor:0.00}).");
+            DrawFitCount();
             return;
         }
 
@@ -314,9 +317,48 @@ public sealed partial class MainWindow : Window
             plugin.Configuration.MatchLayoutFloor = match;
             plugin.Configuration.Save();
         }
+        if (match)
+        {
+            var shift = LayoutHeightShift();
+            ImGui.SetNextItemWidth(120);
+            if (ImGui.InputFloat("Shift##layoutShift", ref shift, 0.05f, 0.5f, "%.2f"))
+            {
+                plugin.Configuration.LayoutShiftOverride = shift;
+                plugin.Configuration.Save();
+            }
+            ImGui.SameLine();
+            if (plugin.Configuration.LayoutShiftOverride != null)
+            {
+                if (ImGui.SmallButton("Auto##layoutShift"))
+                {
+                    plugin.Configuration.LayoutShiftOverride = null;
+                    plugin.Configuration.Save();
+                }
+            }
+            else
+            {
+                ImGui.TextDisabled("(automatic)");
+            }
+        }
         ImGui.TextDisabled(match
-            ? "Layout spots are moved to this floor when placing. Stand on the floor the layout is for."
-            : "Without this, spots below your floor are placed near you instead.");
+            ? "Layout spots are moved by this much when placing. Stand on the floor the layout is for."
+            : "Without this, items whose spot is below your floor stay in the storeroom.");
+        DrawFitCount();
+    }
+
+    /// <summary>How many of the storeroom items' layout spots fit this room with the current shift.</summary>
+    private void DrawFitCount()
+    {
+        if (plan == null) return;
+        var needs = plan.Of(PlanAction.Retrieve)
+            .Where(e => e.Source is { Kind: SourceKind.HouseStoreroom } s && s.HouseId == selectedHouse && e.Need != null)
+            .Select(e => e.Need!.Value).ToList();
+        if (needs.Count == 0) return;
+
+        var shift = LayoutHeightShift();
+        var fit = needs.Count(n => Refurnish.Automation.UiPlacer.LayoutTarget(n, shift, out _) != null);
+        var color = fit == needs.Count ? Good : fit == 0 ? Bad : Warn;
+        ImGui.TextColored(color, $"With this shift, {fit} of {needs.Count} storeroom items have a layout spot that fits this room.");
     }
 
     private void DrawGroupedBySource(IEnumerable<PlanEntry> entries, bool showNeeded)

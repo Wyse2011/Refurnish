@@ -28,6 +28,9 @@ public class Configuration : IPluginConfiguration
     /// <summary>Shift the layout up or down so its floor matches the floor you're standing on.</summary>
     public bool MatchLayoutFloor { get; set; }
 
+    /// <summary>A shift typed in by hand, used instead of the automatic one. Null means automatic.</summary>
+    public float? LayoutShiftOverride { get; set; }
+
     /// <summary>Learned furnishing-window clicks for placing from the storeroom.</summary>
     public UiPlaceProfile? UiPlace { get; set; }
 
