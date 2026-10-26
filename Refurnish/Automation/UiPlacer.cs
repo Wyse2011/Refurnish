@@ -69,6 +69,8 @@ public sealed class UiPlacer
     private string? gameError;          // set when the game shows an error message while placing
     private string? previousGameError;  // the error from the last failed item
     private bool diagnosticLogged;
+    private System.Numerics.Vector3 sentSpot;
+    private int nearMeCount;
     private bool toastHooked;
 
     public bool Running => step != Step.Idle;
@@ -124,6 +126,7 @@ public sealed class UiPlacer
         baselineFlags = Plugin.Condition.AsReadOnlySet().ToHashSet();
         gameError = null;
         previousGameError = null;
+        nearMeCount = 0;
         nextAllowedUtc = DateTime.UtcNow + (placeMode == UiPlaceMode.Test ? TimeSpan.Zero : Countdown);
         step = Step.Ready;
         if (!toastHooked)
@@ -134,8 +137,8 @@ public sealed class UiPlacer
         Log(mode switch
         {
             UiPlaceMode.Test => "Test started: picking up the first storeroom item and putting it back.",
-            UiPlaceMode.One => "Placing one item. Move your mouse over open floor now; starting in 3 seconds.",
-            _ => "Placing all needed storeroom items. Move your mouse over open floor and leave it there; starting in 3 seconds.",
+            UiPlaceMode.One => "Placing one item. Starting in 3 seconds.",
+            _ => "Placing all needed storeroom items. Starting in 3 seconds.",
         });
     }
 
@@ -256,7 +259,8 @@ public sealed class UiPlacer
 
         var cache = plugin.Cache.TryGet(Plugin.PlayerState.ContentId);
         var job = new PlaceJob(houseId, selected.Container, selected.Slot, selectedItem, selectedStain);
-        if (LiveStoreResolver.ResolvePlace(plugin.MainWindow.CurrentLayout, cache, job) == null)
+        var resolved = LiveStoreResolver.ResolvePlace(plugin.MainWindow.CurrentLayout, cache, job);
+        if (resolved == null)
         {
             CloseAndNext(profile); // not needed by the layout
             return;
@@ -268,6 +272,17 @@ public sealed class UiPlacer
             CloseAndNext(profile);
             return;
         }
+
+        // Tell the game where to put it, the way pointing at the floor does, before choosing Place.
+        var (spot, rotation, what) = ChooseSpot(resolved.Value.Need);
+        if (!SetPlacementSpot(spot, rotation, out var previous))
+        {
+            Stop("Couldn't set where the item should go.");
+            return;
+        }
+        Log($"  {name}: placing {what} at ({spot.X:0.00}, {spot.Y:0.00}, {spot.Z:0.00}) "
+            + $"(the game's remembered spot was ({previous.X:0.00}, {previous.Y:0.00}, {previous.Z:0.00})).");
+        sentSpot = spot;
 
         placedCountBefore = LiveInventory.CountItem(LiveInventory.InteriorPlaced, selectedItem);
         gameError = null;
@@ -312,14 +327,15 @@ public sealed class UiPlacer
 
         if (!diagnosticLogged) { diagnosticLogged = true; Log(DescribeAim()); }
         var reason = gameError != null ? $"the game said \"{gameError}\"" : "the game didn't place it";
+        if (!plugin.Configuration.PlaceAtLayoutPosition) nearMeCount++; // try a fresh spot next time
         Fail(selected, $"{ItemName(selectedItem)}: {reason}.");
         if (step == Step.Idle) return;
 
         // The same refusal twice in a row means it's the spot, not the item.
         if (gameError != null && gameError == previousGameError)
         {
-            Stop($"The game refused twice in a row (\"{gameError}\"). This usually means your mouse isn't pointing at open floor. "
-                 + "Aim it at an open spot, then try again.");
+            Stop($"The game refused twice in a row (\"{gameError}\"). See the spot check lines in Activity: "
+                 + "if the game's spot doesn't match the one Refurnish set, setting the spot doesn't work this way.");
             return;
         }
         previousGameError = gameError;
@@ -404,6 +420,39 @@ public sealed class UiPlacer
         Log(Summary);
     }
 
+    /// <summary>
+    /// Where to put the next item: its final spot from the layout, or (if that option is off or the
+    /// layout has no position) a spot near you, spiralling outward so items don't land on each other.
+    /// </summary>
+    private (System.Numerics.Vector3 Spot, float Rotation, string What) ChooseSpot(Layout.Requirement need)
+    {
+        if (plugin.Configuration.PlaceAtLayoutPosition && need.HasPosition)
+            return (need.Position, need.Rotation, "at its layout spot");
+
+        var me = Plugin.ObjectTable.LocalPlayer;
+        var center = me?.Position ?? System.Numerics.Vector3.Zero;
+        var k = nearMeCount++;
+        var angle = k * 2.39996f; // golden angle, spreads spots evenly
+        var radius = 1.5f + 0.6f * MathF.Sqrt(k);
+        var spot = new System.Numerics.Vector3(center.X + radius * MathF.Cos(angle), center.Y, center.Z + radius * MathF.Sin(angle));
+        return (spot, 0f, "near you");
+    }
+
+    private static unsafe bool SetPlacementSpot(System.Numerics.Vector3 spot, float rotation, out System.Numerics.Vector3 previous)
+    {
+        previous = default;
+        var hm = HousingManager.Instance();
+        if (hm == null || hm->IndoorTerritory == null) return false;
+        if (!float.IsFinite(spot.X) || !float.IsFinite(spot.Y) || !float.IsFinite(spot.Z) || !float.IsFinite(rotation)) return false;
+        if (MathF.Abs(spot.X) > 500 || MathF.Abs(spot.Y) > 500 || MathF.Abs(spot.Z) > 500) return false;
+
+        var t = hm->IndoorTerritory;
+        previous = new System.Numerics.Vector3(t->StoreroomItemPlacePosition.X, t->StoreroomItemPlacePosition.Y, t->StoreroomItemPlacePosition.Z);
+        t->StoreroomItemPlacePosition = new FFXIVClientStructs.FFXIV.Common.Math.Vector3(spot.X, spot.Y, spot.Z);
+        t->StoreroomItemPlaceRotation = rotation;
+        return true;
+    }
+
     /// <summary>Where the game tried to put the item, where you are, and where the mouse is aiming.</summary>
     private static unsafe string DescribeAim()
     {
@@ -412,7 +461,7 @@ public sealed class UiPlacer
         if (hm != null && hm->IndoorTerritory != null)
         {
             var p = hm->IndoorTerritory->StoreroomItemPlacePosition;
-            sb.Append($"game's placement spot ({p.X:0.00}, {p.Y:0.00}, {p.Z:0.00})");
+            sb.Append($"game's placement spot now ({p.X:0.00}, {p.Y:0.00}, {p.Z:0.00})");
         }
         var me = Plugin.ObjectTable.LocalPlayer;
         if (me != null) sb.Append($", you at ({me.Position.X:0.00}, {me.Position.Y:0.00}, {me.Position.Z:0.00})");

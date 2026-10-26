@@ -229,7 +229,7 @@ public sealed partial class MainWindow
         ImGui.Spacing();
 
         // ---- Setup ----
-        if (!ready || learner.Active || (!learner.LastSucceeded && !string.IsNullOrEmpty(learner.Status)))
+        if (!ready || learner.Active)
         {
             ImGui.TextColored(Warn, ready ? "Learning again:" : "One-time setup (again after each game patch):");
             ImGui.TextWrapped("1. Open the furnishing window on its storeroom tab and press Learn.");
@@ -258,6 +258,8 @@ public sealed partial class MainWindow
             ImGui.BeginDisabled(placer.Running);
             if (ImGui.SmallButton("Learn again##ui")) learner.Start();
             ImGui.EndDisabled();
+            if (!learner.LastSucceeded && !string.IsNullOrEmpty(learner.Status) && learner.Status != "Cancelled.")
+                ImGui.TextColored(Bad, $"Last learn attempt: {learner.Status} (the earlier setup is still used)");
         }
 
         // ---- Run ----
@@ -265,7 +267,7 @@ public sealed partial class MainWindow
         {
             var countdown = placer.CountdownLeft;
             if (countdown > 0)
-                ImGui.TextColored(Warn, $"Move your mouse over open floor and leave it there. Starting in {Math.Ceiling(countdown)}...");
+                ImGui.TextColored(Warn, $"Starting in {Math.Ceiling(countdown)}...");
             else
                 ImGui.TextColored(Warn, $"Working... placed {placer.Placed} so far{(placer.Pass > 1 ? " (second pass over missed items)" : "")}.");
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
@@ -294,9 +296,15 @@ public sealed partial class MainWindow
 
             var problem = testProblem ?? placeProblem;
             if (problem != null) ImGui.TextColored(Warn, problem);
-            ImGui.TextWrapped("The game places each item where your mouse is pointing, so after pressing Place, move your mouse over "
-                              + "open floor during the 3-second countdown and leave it there. Keep the furnishing window on its storeroom tab "
-                              + "and don't click in it while Refurnish works. To stop, type /refurnish stop.");
+            var atLayout = plugin.Configuration.PlaceAtLayoutPosition;
+            if (ImGui.RadioButton("At its spot in the layout##ui", atLayout)) { plugin.Configuration.PlaceAtLayoutPosition = true; plugin.Configuration.Save(); }
+            ImGui.SameLine();
+            if (ImGui.RadioButton("Near me##ui", !atLayout)) { plugin.Configuration.PlaceAtLayoutPosition = false; plugin.Configuration.Save(); }
+            ImGui.TextWrapped(atLayout
+                ? "Each item goes straight to its final position. Items that were already placed still need MakePlace to move them."
+                : "Items are spread around where you're standing, for MakePlace to arrange.");
+            ImGui.TextWrapped("Keep the furnishing window on its storeroom tab and don't click in it while Refurnish works. "
+                              + "To stop, type /refurnish stop.");
         }
 
         if (ImGui.BeginPopup("##confirmUiPlaceAll"))
