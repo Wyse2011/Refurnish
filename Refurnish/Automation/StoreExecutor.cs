@@ -204,7 +204,8 @@ public sealed class StoreExecutor
             states[job.SlotKey] = (JobState.Done, currentDestination == StoreDestination.Storeroom ? "Stored" : "In inventory");
             current = null;
             DoneThisRun++;
-            nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(Math.Max(0.5, plugin.Configuration.StoreDelaySeconds));
+            // Each item already waited for the game to confirm it moved, so this pause is extra.
+            nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(Math.Max(Configuration.MinStoreDelaySeconds, plugin.Configuration.StoreDelaySeconds));
             if (queue.Count == 0) StopReason = null;
             return;
         }

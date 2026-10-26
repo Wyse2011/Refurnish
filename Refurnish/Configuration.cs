@@ -31,8 +31,11 @@ public class Configuration : IPluginConfiguration
     /// <summary>Place items at their spot from the layout (true) or where you're standing (false).</summary>
     public bool PlaceAtLayoutPosition { get; set; } = true;
 
-    /// <summary>Pause between items when storing or placing several. Never less than 0.5 seconds.</summary>
+    /// <summary>Extra pause between stored items, on top of waiting for each one to be confirmed.</summary>
     public float StoreDelaySeconds { get; set; } = 1.5f;
+
+    /// <summary>The shortest pause allowed between stored items.</summary>
+    public const float MinStoreDelaySeconds = 0.1f;
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

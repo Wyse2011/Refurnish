@@ -436,11 +436,15 @@ public sealed partial class MainWindow : Window
 
             var delay = plugin.Configuration.StoreDelaySeconds;
             ImGui.SetNextItemWidth(200);
-            if (ImGui.SliderFloat("Pause between items", ref delay, 0.5f, 5f, "%.1f s"))
+            if (ImGui.SliderFloat("Pause between items", ref delay, Configuration.MinStoreDelaySeconds, 5f, "%.2f s"))
             {
-                plugin.Configuration.StoreDelaySeconds = delay;
+                plugin.Configuration.StoreDelaySeconds = Math.Max(Configuration.MinStoreDelaySeconds, delay);
                 plugin.Configuration.Save();
             }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Extra wait after each item. Refurnish always waits for the game to confirm an item moved "
+                                 + "before starting the next, so even the lowest setting does one item at a time. "
+                                 + "Ctrl+click to type an exact value.");
         }
 
         DrawConfirmPopup(selected);

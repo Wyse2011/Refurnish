@@ -439,7 +439,7 @@ public sealed class UiPlacer
             if (mode == UiPlaceMode.One) { Finish(); return; }
             // The list shifts up after an item leaves, so the same position now holds the next item.
             step = Step.Ready;
-            nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(Math.Max(1.0, plugin.Configuration.StoreDelaySeconds));
+            nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1.0); // placing keeps its own pace; the storing slider doesn't affect it
             return;
         }
 

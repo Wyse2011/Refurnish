@@ -75,7 +75,8 @@ Setup is tied to the house and to the game version, so it needs redoing after a 
 - There must be a free storeroom slot (or inventory slot, if overflow is set up).
 - After each request, Refurnish waits for the game to confirm the item actually moved. If it
   doesn't within a few seconds, everything stops. Nothing is retried automatically.
-- One item at a time, with a pause between items (1.5 seconds by default, never under 0.5).
+- One item at a time: each item must be confirmed by the game before the next starts, plus an
+  adjustable extra pause (1.5 seconds by default, down to 0.1).
 - **STOP** button in the window, or type `/refurnish stop`.
 
 ## Placing furnishings from the storeroom
