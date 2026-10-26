@@ -87,6 +87,11 @@ public sealed class UiPlacer
     private bool diagnosticLogged;
     private System.Numerics.Vector3 sentSpot;
     private int nearMeCount;
+    private readonly HashSet<(int, int)> badCells = new();   // floor spots the game refused this run
+    private int spotTries;                                    // different spots tried for the current item
+    private const int MaxSpotTries = 5;
+    private const float CellSize = 1.0f;
+    private const float Clearance = 0.9f;
     private Layout.Requirement pendingNeed;
     private DateTime? previewSeenUtc;
     private bool previewMoved;
@@ -147,6 +152,8 @@ public sealed class UiPlacer
         gameError = null;
         previousGameError = null;
         nearMeCount = 0;
+        badCells.Clear();
+        spotTries = 0;
         nextAllowedUtc = DateTime.UtcNow + (placeMode == UiPlaceMode.Test ? TimeSpan.Zero : Countdown);
         step = Step.Ready;
         if (!toastHooked)
@@ -334,6 +341,12 @@ public sealed class UiPlacer
         if (spotMode != PlaceSpot.InFront && !previewMoved)
         {
             var (spot, rotation, what) = ChooseSpot(pendingNeed, spotMode);
+            if (float.IsNaN(rotation) && what.StartsWith("nowhere"))
+            {
+                Stop("There's no free floor left near you. Walk to another open part of the room and press Place all again; "
+                     + "it carries on with what's left.");
+                return;
+            }
             if (!Sane(spot, rotation))
             {
                 Fail(selected, $"{name}: the chosen spot looks wrong, so it wasn't used.");
@@ -421,6 +434,7 @@ public sealed class UiPlacer
             Placed++;
             failuresInARow = 0;
             previousGameError = null;
+            spotTries = 0;
             Log($"Placed {ItemName(selectedItem)}.");
             if (mode == UiPlaceMode.One) { Finish(); return; }
             // The list shifts up after an item leaves, so the same position now holds the next item.
@@ -435,12 +449,33 @@ public sealed class UiPlacer
 
         if (!diagnosticLogged) { diagnosticLogged = true; sentSpotForLog = sentSpot; Log(DescribeAim()); }
         var reason = gameError != null ? $"the game said \"{gameError}\"" : "the game didn't place it";
-        if (plugin.Configuration.UiPlaceSpot == PlaceSpot.NearMe) nearMeCount++; // try a fresh spot next time
+
+        // A full room isn't a spot problem: nothing more can go in.
+        if (gameError != null && gameError.Contains("limit", StringComparison.OrdinalIgnoreCase))
+        {
+            Stop($"The game said \"{gameError}\". This room can't take more furnishings.");
+            return;
+        }
+
+        // When Refurnish chose the spot, a refusal usually means that spot is blocked (a wall, an
+        // item it couldn't see). Remember it and try the same item at the next free spot.
+        if (plugin.Configuration.UiPlaceSpot == PlaceSpot.NearMe && gameError != null && spotTries < MaxSpotTries)
+        {
+            badCells.Add(Cell(sentSpot));
+            spotTries++;
+            Log($"  That spot was refused; trying {ItemName(selectedItem)} at another spot ({spotTries}/{MaxSpotTries}).");
+            gameError = null;
+            if (CallbackTap.IsVisible(profile.MenuAddon)) CloseMenu(profile, finishAfter: false);
+            else { step = Step.Ready; nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1); }
+            return; // same list position, so the same item is picked again
+        }
+        spotTries = 0;
+
         Fail(selected, $"{ItemName(selectedItem)}: {reason}.");
         if (step == Step.Idle) return;
 
         // The same refusal twice in a row means it's the spot, not the item.
-        if (gameError != null && gameError == previousGameError)
+        if (gameError != null && gameError == previousGameError && plugin.Configuration.UiPlaceSpot != PlaceSpot.NearMe)
         {
             Stop($"The game refused twice in a row (\"{gameError}\"). The spot is probably blocked; "
                  + "try \"Near me\", or stand somewhere more open.");
@@ -538,13 +573,49 @@ public sealed class UiPlacer
             Log($"  The layout spot is {why}, so this item goes near you instead. The layout may be for a different room.");
         }
 
+        var free = FindFreeSpot();
+        if (free != null)
+            return (free.Value, 0f, mode == PlaceSpot.Layout ? "near you (the layout spot doesn't fit this room)" : "to free floor near you");
+        return (System.Numerics.Vector3.Zero, float.NaN, "nowhere: no free floor left near you");
+    }
+
+    private static (int, int) Cell(System.Numerics.Vector3 v) => ((int)MathF.Round(v.X / CellSize), (int)MathF.Round(v.Z / CellSize));
+
+    /// <summary>
+    /// The nearest free floor spot inside the area the room's furniture covers (so it stays within
+    /// the walls), at least a little way from every placed item, and not one the game already refused.
+    /// </summary>
+    private System.Numerics.Vector3? FindFreeSpot()
+    {
         var me = Plugin.ObjectTable.LocalPlayer;
-        var center = me?.Position ?? System.Numerics.Vector3.Zero;
-        var k = nearMeCount++;
-        var angle = k * 2.39996f; // golden angle, spreads spots evenly
-        var radius = 1.5f + 0.6f * MathF.Sqrt(k);
-        var spot = new System.Numerics.Vector3(center.X + radius * MathF.Cos(angle), center.Y, center.Z + radius * MathF.Sin(angle));
-        return (spot, 0f, mode == PlaceSpot.Layout ? "near you (the layout has no position for it)" : "near you");
+        if (me == null) return null;
+        var p = me.Position;
+
+        var furniture = LiveFurniture.Read()?.Values.Select(f => f.Position).ToList() ?? new List<System.Numerics.Vector3>();
+        var sameFloor = furniture.Where(f => MathF.Abs(f.Y - p.Y) < 1.5f).ToList();
+
+        // The room's footprint, as far as the furniture shows it; at least a few steps around you.
+        float minX = p.X - 3, maxX = p.X + 3, minZ = p.Z - 3, maxZ = p.Z + 3;
+        foreach (var f in furniture)
+        {
+            minX = MathF.Min(minX, f.X); maxX = MathF.Max(maxX, f.X);
+            minZ = MathF.Min(minZ, f.Z); maxZ = MathF.Max(maxZ, f.Z);
+        }
+
+        System.Numerics.Vector3? best = null;
+        var bestDist = float.MaxValue;
+        for (var x = MathF.Ceiling(minX / CellSize) * CellSize; x <= maxX; x += CellSize)
+        for (var z = MathF.Ceiling(minZ / CellSize) * CellSize; z <= maxZ; z += CellSize)
+        {
+            var spot = new System.Numerics.Vector3(x, p.Y, z);
+            if (badCells.Contains(Cell(spot))) continue;
+            var d = MathF.Sqrt((x - p.X) * (x - p.X) + (z - p.Z) * (z - p.Z));
+            if (d < 1.0f || d >= bestDist) continue; // not on top of you
+            if (sameFloor.Any(f => MathF.Abs(f.X - x) < Clearance && MathF.Abs(f.Z - z) < Clearance)) continue;
+            best = spot;
+            bestDist = d;
+        }
+        return best;
     }
 
     /// <summary>Where the game tried to put the item, where you are, and where the mouse is aiming.</summary>
