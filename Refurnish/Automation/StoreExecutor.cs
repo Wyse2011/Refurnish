@@ -144,7 +144,8 @@ public sealed class StoreExecutor
         if (!Plugin.PlayerState.IsLoaded) return "You're not logged in.";
         if (plugin.Scanner.CurrentHouseId != job.HouseId) return "You're not inside the room this plan is for.";
         if (plugin.Learner.Active || plugin.PlaceLearner.Active) return "Learning is active. Finish or cancel it first.";
-        if (plugin.Placer.Running) return "Placing is running. Wait for it to finish.";
+        if (plugin.Placer.Running || plugin.UiPlacer.Running) return "Placing is running. Wait for it to finish.";
+        if (plugin.UiLearner.Active) return "Learning is active. Finish or cancel it first.";
         if (!LiveInventory.IsInteriorPlaced(job.Container)) return "That isn't a placed-furniture slot.";
 
         // Re-plan from a live read: is a copy of this item (same dye) still unneeded, and where is it now?

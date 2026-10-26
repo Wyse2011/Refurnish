@@ -22,6 +22,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
+    [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
 
     internal static string Version => typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "?";
 
@@ -41,6 +42,9 @@ public sealed class Plugin : IDalamudPlugin
     public PlaceLearner PlaceLearner { get; }
     public PlaceExecutor Placer { get; }
     public PlacementRecorder PlacementTest { get; }
+    public CallbackTap Tap { get; }
+    public UiPlaceLearner UiLearner { get; }
+    public UiPlacer UiPlacer { get; }
     public FileDialogManager FileDialog { get; } = new();
     public WindowSystem WindowSystem { get; } = new("Refurnish");
     public MainWindow MainWindow { get; }
@@ -58,7 +62,10 @@ public sealed class Plugin : IDalamudPlugin
         if (PlaceExecutor.DirectPlacingEnabled) Packets.Enable(); // don't watch network traffic at all while placing is off
         PlaceLearner = new PlaceLearner(this);
         Placer = new PlaceExecutor(this);
-        PlacementTest = new PlacementRecorder();
+        Tap = new CallbackTap();
+        PlacementTest = new PlacementRecorder(Tap);
+        UiLearner = new UiPlaceLearner(this);
+        UiPlacer = new UiPlacer(this);
         Framework.Update += OnFrameworkUpdate;
 
         MainWindow = new MainWindow(this);
@@ -85,7 +92,10 @@ public sealed class Plugin : IDalamudPlugin
         PlaceLearner.Cancel();
         Recorder.Dispose();
         Packets.Dispose();
+        UiPlacer.Stop("Plugin unloaded.");
+        UiLearner.Cancel();
         PlacementTest.Dispose();
+        Tap.Dispose();
 
         WindowSystem.RemoveAllWindows();
         Scanner.Dispose();
@@ -98,6 +108,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             Executor.Stop("Stopped with /refurnish stop.");
             Placer.Stop("Stopped with /refurnish stop.");
+            UiPlacer.Stop("Stopped with /refurnish stop.");
             return;
         }
         MainWindow.Toggle();
@@ -112,6 +123,8 @@ public sealed class Plugin : IDalamudPlugin
             Executor.Update();
             Placer.Update();
             PlacementTest.Update();
+            UiLearner.Update();
+            UiPlacer.Update();
             Packets.Update();
         }
         catch (System.Exception ex)
@@ -119,6 +132,8 @@ public sealed class Plugin : IDalamudPlugin
             Log.Error(ex, "Refurnish automation error");
             Executor.Stop("Something went wrong, so storing stopped. See /xllog for details.");
             Placer.Stop("Something went wrong, so placing stopped. See /xllog for details.");
+            UiPlacer.Stop("Something went wrong, so placing stopped. See /xllog for details.");
+            UiLearner.Cancel();
             Learner.Cancel();
             PlaceLearner.Cancel();
         }

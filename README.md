@@ -78,45 +78,32 @@ Setup is tied to the house and to the game version, so it needs redoing after a 
 - One item at a time, with a pause between items (1.5 seconds by default, never under 0.5).
 - **STOP** button in the window, or type `/refurnish stop`.
 
-## Placing furnishings from the storeroom or inventory
+## Placing furnishings from the storeroom
 
-> **Switched off in 0.4.2.** Sending placements directly skipped the game's own "holding an item"
-> step and left the game client broken (hidden UI, locked commands, crashes). It's being rebuilt
-> to go through the game's own placement flow. Until then, the Retrieve tab lists what to place
-> by hand. The description below is of the disabled feature.
+At the top of the **Retrieve** tab, Refurnish can place the items the layout needs that are in
+this room's storeroom. It does this by clicking through the game's own furnishing window exactly
+as you would: it picks an item in the storeroom list, which opens its menu, then chooses
+**Place**, or closes the menu if the item isn't needed. The game does the placing itself and
+chooses where the item goes; afterwards, apply the layout with the MakePlace plugin to move
+everything into position. Items in your inventory are listed to place by hand for now.
 
-At the top of the **Retrieve** tab, everything the layout needs that's already in this room's
-storeroom or your inventory gets a **Place** button, plus **Place all selected** with a
+**One-time setup (again after each game patch):** open the furnishing window on its storeroom
+tab, press **Learn**, place one item from the list yourself, then open another item's menu and
+press Escape. Refurnish saves only those clicks (plain numbers, never text or addresses) and the
+menu's wording, and only chooses Place when an item's menu reads exactly the same.
+
+**Buttons:** **Test** picks up the first item and puts it back without placing anything.
+**Place one** places a single needed item. **Place all needed** walks the whole list, after a
 confirmation.
 
-Choose where items go:
+**Safety:** after every click Refurnish waits for the game to respond. If placing an item fails,
+it's set aside and the walk continues; after the end of the list it goes back to the top for the
+missed ones. It stops if you leave the room, close the furnishing window or leave its storeroom
+tab, if the game's status changes unexpectedly, if a menu Refurnish didn't open appears, or after
+ten failures in a row. Don't click in the furnishing window while it works.
 
-- **At its spot in the layout** (default): straight to the final position and rotation from the
-  MakePlace file. Items that were already placed still need the MakePlace plugin to move them.
-- **Where I'm standing:** dropped at your feet for MakePlace to arrange.
-
-**One-time setup per room and source.** Press **Learn** in that section, then place one item
-yourself from the storeroom (or inventory) with the game's menu, anywhere, turned a little so it
-isn't facing straight ahead. Refurnish reads where it really landed and only accepts the message
-that contains that exact slot, position and rotation. The game's network
-message IDs change every patch, so Refurnish copies the exact message the game sent and only
-swaps the item, position and rotation. It's tied to the room and game version, and in some cases
-only to the current game session (the window says so).
-
-Before every item Refurnish re-plans from a live read of the room, checks the slot still holds
-that exact item, checks there's a free furnishing slot and that the position is sensible, and
-afterwards waits for the item to actually appear in the room.
-
-**Position check:** after every placement, Refurnish reads where the game actually put the item.
-If it isn't where it was sent, the learned message is wrong and everything stops immediately.
-
-**If an item can't be placed:** it's set aside and the run moves straight on to the next item.
-After the whole list, Refurnish goes back to the top and tries the set-aside items again. Anything
-still failing is marked with the reason. An item that left its slot but never appeared is not
-retried, since its state is unknown.
-
-The whole run also stops if you leave the room, the room runs out of furnishing slots, the
-game's connection can't be found, or ten items in a row fail.
+> An earlier version sent placement messages directly, which left the game client broken (hidden
+> UI, locked commands, crashes). That approach is switched off and isn't used.
 
 ---
 

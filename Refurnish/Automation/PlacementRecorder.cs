@@ -1,11 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
-using Dalamud.Hooking;
 using FFXIVClientStructs.FFXIV.Client.Game;
-using FFXIVClientStructs.FFXIV.Component.GUI;
 using Refurnish.Inventory;
 
 namespace Refurnish.Automation;
@@ -16,17 +13,14 @@ namespace Refurnish.Automation;
 ///  - changes to the housing state (holding an item, which storeroom slot it came from, moving
 ///    objects, the game's busy/status flags);
 ///  - items leaving the storeroom or inventory and appearing in the room.
-/// It never sends anything or changes the game. The window hook passes every call through untouched
-/// and is only on while recording.
+/// It never sends anything or changes the game.
 /// </summary>
 public sealed unsafe class PlacementRecorder : IDisposable
 {
     private static readonly TimeSpan MaxDuration = TimeSpan.FromMinutes(5);
     private const int MaxLines = 600;
 
-    private delegate bool FireCallbackDelegate(AtkUnitBase* self, uint valueCount, AtkValue* values, bool close);
-
-    private readonly Hook<FireCallbackDelegate>? hook;
+    private readonly CallbackTap tap;
     private readonly List<string> lines = new();
     private readonly object gate = new();
     private DateTime startedUtc;
@@ -34,20 +28,12 @@ public sealed unsafe class PlacementRecorder : IDisposable
     private int lastRoom, lastBag, lastPlaced;
 
     public bool Recording { get; private set; }
-    public string? SetupError { get; }
+    public string? SetupError => tap.SetupError;
     public int LineCount { get { lock (gate) return lines.Count; } }
 
-    public PlacementRecorder()
+    public PlacementRecorder(CallbackTap tap)
     {
-        try
-        {
-            hook = Plugin.GameInterop.HookFromAddress<FireCallbackDelegate>((nint)AtkUnitBase.Addresses.FireCallback.Value, Detour);
-        }
-        catch (Exception ex)
-        {
-            SetupError = "Couldn't attach to the game's window callbacks, so recording is unavailable.";
-            Plugin.Log.Error(ex, "PlacementRecorder hook failed");
-        }
+        this.tap = tap;
     }
 
     public void Start()
@@ -59,13 +45,15 @@ public sealed unsafe class PlacementRecorder : IDisposable
         Recording = true;
         Add($"Recording started. Game version {Plugin.GameVersion}, Refurnish {Plugin.Version}. "
             + $"Storeroom items {lastRoom}, inventory items {lastBag}, placed {lastPlaced}.");
-        hook?.Enable();
+        tap.Seen += OnCallback;
+        tap.Acquire();
     }
 
     public void Stop()
     {
         if (!Recording) return;
-        hook?.Disable();
+        tap.Seen -= OnCallback;
+        tap.Release();
         Recording = false;
         Add("Recording stopped.");
     }
@@ -134,46 +122,9 @@ public sealed unsafe class PlacementRecorder : IDisposable
         return sb.ToString();
     }
 
-    private bool Detour(AtkUnitBase* self, uint valueCount, AtkValue* values, bool close)
+    private void OnCallback(CbEvent e)
     {
-        try
-        {
-            if (Recording && self != null)
-            {
-                var sb = new StringBuilder();
-                sb.Append($"CALLBACK {self->NameString} close={close} values=[");
-                for (var i = 0; i < valueCount && i < 16; i++)
-                {
-                    if (i > 0) sb.Append(", ");
-                    sb.Append(Format(values[i]));
-                }
-                if (valueCount > 16) sb.Append(", ...");
-                sb.Append(']');
-                Add(sb.ToString());
-            }
-        }
-        catch
-        {
-            // Never let recording break the game's own call.
-        }
-        return hook!.Original(self, valueCount, values, close);
-    }
-
-    private static string Format(AtkValue v)
-    {
-        var type = (AtkValueType)((int)v.Type & 0xF);
-        return type switch
-        {
-            AtkValueType.Bool => $"bool:{v.Byte != 0}",
-            AtkValueType.Int => $"int:{v.Int}",
-            AtkValueType.UInt => $"uint:{v.UInt}",
-            AtkValueType.Int64 => $"long:{v.Int64}",
-            AtkValueType.UInt64 => $"ulong:{v.UInt64}",
-            AtkValueType.Float => $"float:{v.Float:0.###}",
-            AtkValueType.String or AtkValueType.ConstString =>
-                v.String.Value != null ? $"str:\"{Marshal.PtrToStringUTF8((nint)v.String.Value)}\"" : "str:null",
-            _ => $"type{(int)v.Type}",
-        };
+        if (Recording) Add(e.Display + (e.MenuStrings.Count > 0 ? $" menu=[{string.Join(" | ", e.MenuStrings)}]" : ""));
     }
 
     private void Add(string line)
@@ -185,9 +136,5 @@ public sealed unsafe class PlacementRecorder : IDisposable
         }
     }
 
-    public void Dispose()
-    {
-        Stop();
-        hook?.Dispose();
-    }
+    public void Dispose() => Stop();
 }

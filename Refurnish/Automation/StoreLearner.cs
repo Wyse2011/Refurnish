@@ -35,7 +35,7 @@ public sealed class StoreLearner
     public bool Start()
     {
         if (plugin.Recorder.SetupError != null) { Fail(plugin.Recorder.SetupError); return false; }
-        if (plugin.Executor.Running || plugin.Placer.Running || plugin.PlaceLearner.Active)
+        if (plugin.Executor.Running || plugin.Placer.Running || plugin.PlaceLearner.Active || plugin.UiPlacer.Running || plugin.UiLearner.Active)
         {
             Fail("Wait for other Refurnish actions to finish first.");
             return false;

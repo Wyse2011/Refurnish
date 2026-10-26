@@ -30,18 +30,7 @@ public sealed partial class MainWindow
 
         if (!PlaceExecutor.DirectPlacingEnabled)
         {
-            ImGui.TextColored(Warn, "Automatic placing is switched off in this version.");
-            ImGui.TextWrapped("Sending placements directly confused the game client (hidden UI, locked commands, crashes). "
-                              + "It's being rebuilt to go through the game's own placement steps. For now, these "
-                              + $"{rows.Count} items are ready to place by hand from the storeroom or your inventory; "
-                              + "anywhere is fine, then apply the layout with MakePlace.");
-            foreach (var g in rows.GroupBy(e => (e.ItemId, e.ActualStain)).OrderBy(g => ItemName(g.Key.ItemId)))
-            {
-                var dye = g.Key.ActualStain == 0 ? "" : $" ({stains!.Name(g.Key.ActualStain)})";
-                ImGui.BulletText($"{g.Count()}x {ItemName(g.Key.ItemId)}{dye}");
-            }
-            ImGui.Spacing();
-            ImGui.TextDisabled("To help rebuild automatic placing, see the Placement test tab.");
+            DrawUiPlacing(rows);
             return;
         }
 
@@ -220,6 +209,137 @@ public sealed partial class MainWindow
             ImGui.PopID();
         }
         ImGui.EndTable();
+    }
+
+    private bool uiConfirmPending;
+
+    private void DrawUiPlacing(List<PlanEntry> rows)
+    {
+        var placer = plugin.UiPlacer;
+        var learner = plugin.UiLearner;
+        var profile = plugin.Configuration.UiPlace;
+        var ready = profile is { IsValid: true };
+        var inRoom = plugin.Scanner.CurrentHouseId == selectedHouse && selectedHouse != 0;
+        var fromRoom = rows.Where(e => e.Source!.Kind == SourceKind.HouseStoreroom).ToList();
+        var fromBag = rows.Where(e => e.Source!.Kind == SourceKind.Inventory).ToList();
+
+        ImGui.TextWrapped("Refurnish clicks through the furnishing window's storeroom list for you, exactly as you would: "
+                          + "it picks each needed item and chooses Place. The game decides where each item goes; "
+                          + "afterwards, apply the layout with MakePlace to move everything into position.");
+        ImGui.Spacing();
+
+        // ---- Setup ----
+        if (!ready || learner.Active || (!learner.LastSucceeded && !string.IsNullOrEmpty(learner.Status)))
+        {
+            ImGui.TextColored(Warn, ready ? "Learning again:" : "One-time setup (again after each game patch):");
+            ImGui.TextWrapped("1. Open the furnishing window on its storeroom tab and press Learn.");
+            ImGui.TextWrapped("2. Click an item in the storeroom list and choose Place (anywhere).");
+            ImGui.TextWrapped("3. Click another item in the list and press Escape to close its menu.");
+            if (learner.Active)
+            {
+                ImGui.TextColored(Warn, learner.Status);
+                if (ImGui.Button("Cancel learning##ui")) learner.Cancel();
+            }
+            else
+            {
+                ImGui.BeginDisabled(!inRoom || placer.Running);
+                if (ImGui.Button("Learn##ui", new Vector2(120, 0))) learner.Start();
+                ImGui.EndDisabled();
+                if (!inRoom) { ImGui.SameLine(); ImGui.TextColored(Warn, "Go inside this room first."); }
+                if (!string.IsNullOrEmpty(learner.Status))
+                    ImGui.TextColored(learner.LastSucceeded ? Good : Bad, learner.Status);
+            }
+            ImGui.Spacing();
+        }
+        else
+        {
+            ImGui.TextColored(Good, "Setup: ready.");
+            ImGui.SameLine();
+            ImGui.BeginDisabled(placer.Running);
+            if (ImGui.SmallButton("Learn again##ui")) learner.Start();
+            ImGui.EndDisabled();
+        }
+
+        // ---- Run ----
+        if (placer.Running)
+        {
+            ImGui.TextColored(Warn, $"Working... placed {placer.Placed} so far{(placer.Pass > 1 ? " (second pass over missed items)" : "")}.");
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
+            if (ImGui.Button("STOP##ui", new Vector2(-1, 32))) placer.Stop("Stopped by you.");
+            ImGui.PopStyleColor();
+            ImGui.TextDisabled("You can also type /refurnish stop. Don't click in the furnishing window while it works.");
+        }
+        else if (ready)
+        {
+            var testProblem = placer.CanStart(selectedHouse, UiPlaceMode.Test);
+            var placeProblem = placer.CanStart(selectedHouse, UiPlaceMode.All);
+
+            ImGui.BeginDisabled(testProblem != null);
+            if (ImGui.Button("Test: pick up and put back", new Vector2(220, 0))) placer.Start(selectedHouse, UiPlaceMode.Test);
+            ImGui.EndDisabled();
+            ImGui.SameLine();
+            ImGui.BeginDisabled(placeProblem != null || fromRoom.Count == 0);
+            if (ImGui.Button("Place one", new Vector2(110, 0))) placer.Start(selectedHouse, UiPlaceMode.One);
+            ImGui.SameLine();
+            if (ImGui.Button($"Place all needed ({fromRoom.Count})...", new Vector2(220, 0)))
+            {
+                uiConfirmPending = true;
+                ImGui.OpenPopup("##confirmUiPlaceAll");
+            }
+            ImGui.EndDisabled();
+
+            var problem = testProblem ?? placeProblem;
+            if (problem != null) ImGui.TextColored(Warn, problem);
+            ImGui.TextDisabled("Stand in open floor space, keep the furnishing window on its storeroom tab, and don't click in it while Refurnish works.");
+        }
+
+        if (ImGui.BeginPopup("##confirmUiPlaceAll"))
+        {
+            ImGui.TextUnformatted($"Place {fromRoom.Count} needed items from the storeroom?");
+            ImGui.TextWrapped("Refurnish goes down the storeroom list, places what the layout needs and skips the rest. "
+                              + "Anything that fails is retried after the end of the list. It stops if anything unexpected happens.");
+            if (ImGui.Button("Yes, place them##ui", new Vector2(150, 0)) && uiConfirmPending)
+            {
+                uiConfirmPending = false;
+                placer.Start(selectedHouse, UiPlaceMode.All);
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel##uiconfirm", new Vector2(100, 0)))
+            {
+                uiConfirmPending = false;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
+        }
+        else
+        {
+            uiConfirmPending = false;
+        }
+
+        if (placer.StopReason != null && !placer.Running) ImGui.TextColored(Bad, $"Stopped: {placer.StopReason}");
+        else if (placer.Summary != null && !placer.Running) ImGui.TextColored(placer.FinalFailures > 0 ? Warn : Good, placer.Summary);
+
+        var recent = placer.RecentLog(12);
+        if (recent.Count > 0 && ImGui.TreeNodeEx("Activity###uiPlaceLog", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            foreach (var line in recent) ImGui.TextDisabled(line);
+            ImGui.TreePop();
+        }
+
+        // ---- What's waiting ----
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextUnformatted($"In the storeroom and needed: {fromRoom.Count}");
+        if (fromBag.Count > 0)
+        {
+            ImGui.TextUnformatted($"In your inventory and needed (place these by hand for now): {fromBag.Count}");
+            foreach (var g in fromBag.GroupBy(e => (e.ItemId, e.ActualStain)).OrderBy(g => ItemName(g.Key.ItemId)))
+            {
+                var dye = g.Key.ActualStain == 0 ? "" : $" ({stains!.Name(g.Key.ActualStain)})";
+                ImGui.BulletText($"{g.Count()}x {ItemName(g.Key.ItemId)}{dye}");
+            }
+        }
     }
 
     private void DrawPlacementTest()
