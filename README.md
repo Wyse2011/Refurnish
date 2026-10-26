@@ -54,8 +54,13 @@ The **Store** tab lists every placed item the new layout doesn't use. You can pr
 a single row, or tick the rows you want and press **Store all selected**, which asks you to
 confirm first.
 
-**One-time setup per house.** Refurnish never guesses what to send the game. Press **Learn**,
-then store any one furnishing yourself with the game's own menu. Refurnish records the exact
+Each room is tracked on its own: an FC house's main floor, each private chamber, and each
+apartment have their own furniture and permissions. Refurnish can only read and change rooms
+where you have decorating permission.
+
+**One-time setup per room.** Refurnish never guesses what to send the game. Press **Learn**,
+then put away any one furnishing yourself with the game's own menu, using "Store" or "Remove".
+In a private chamber or apartment the game may only offer "Remove" (to inventory); that works too. Refurnish records the exact
 request the game sent and reuses it, changing only which item it points at. Do the same with
 "Remove" (to inventory) if you want items to overflow into your bags when the storeroom is full.
 Setup is tied to the house and to the game version, so it needs redoing after a patch.

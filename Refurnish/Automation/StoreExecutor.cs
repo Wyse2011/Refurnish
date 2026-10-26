@@ -142,7 +142,7 @@ public sealed class StoreExecutor
         target = (job.Container, job.Slot);
 
         if (!Plugin.PlayerState.IsLoaded) return "You're not logged in.";
-        if (plugin.Scanner.CurrentHouseId != job.HouseId) return "You're not inside the house this plan is for.";
+        if (plugin.Scanner.CurrentHouseId != job.HouseId) return "You're not inside the room this plan is for.";
         if (plugin.Learner.Active) return "Learning is active. Finish or cancel it first.";
         if (!LiveInventory.IsInteriorPlaced(job.Container)) return "That isn't a placed-furniture slot.";
 
@@ -178,7 +178,7 @@ public sealed class StoreExecutor
         }
 
         if (room != null) return "The storeroom is full. (Teach Refurnish \"Remove to inventory\" to overflow into your bags.)";
-        return "Storing isn't set up for this house yet. Use \"Learn\" first.";
+        return "Storing isn't set up for this room yet. Use \"Learn\" first.";
     }
 
     private void CheckCurrent()

@@ -40,6 +40,9 @@ public sealed unsafe class InventoryScanner : IDisposable
     /// <summary>The house the player is standing in right now (0 if none, or no permissions there).</summary>
     public ulong CurrentHouseId { get; private set; }
 
+    /// <summary>True when inside a house or room you can't decorate (so it can't be read or changed).</summary>
+    public bool InsideWithoutPermission { get; private set; }
+
     private void OnUpdate(IFramework framework)
     {
         if (DateTime.UtcNow < nextScan) return;
@@ -106,19 +109,33 @@ public sealed unsafe class InventoryScanner : IDisposable
     private void ScanHouse(CharacterCache cache)
     {
         CurrentHouseId = 0;
+        InsideWithoutPermission = false;
 
         var hm = HousingManager.Instance();
-        if (hm == null || !hm->IsInside() || !hm->HasHousePermissions()) return;
+        if (hm == null || !hm->IsInside()) return;
+        if (!hm->HasHousePermissions())
+        {
+            InsideWithoutPermission = true;
+            return;
+        }
 
         var house = hm->GetCurrentIndoorHouseId();
         if (house.Id == 0 || house.Id == ulong.MaxValue || house.IsWorkshop) return;
 
         CurrentHouseId = house.Id;
 
+        // Each room (an FC house's main floor, each private chamber, each apartment) has its own ID,
+        // furniture and permissions, so each is tracked separately.
+        var label = DescribeHouse(house);
         if (!cache.Houses.TryGetValue(house.Id, out var known))
         {
-            known = new KnownHouse { HouseId = house.Id, Label = DescribeHouse(hm, house) };
+            known = new KnownHouse { HouseId = house.Id, Label = label };
             cache.Houses[house.Id] = known;
+            store.MarkDirty(cache.ContentId);
+        }
+        else if (known.Label != label)
+        {
+            known.Label = label;
             store.MarkDirty(cache.ContentId);
         }
         known.LastVisitedUtc = DateTime.UtcNow;
@@ -127,14 +144,22 @@ public sealed unsafe class InventoryScanner : IDisposable
         Snapshot(cache, $"house:{house.Id}:storeroom", $"{known.Label}: storeroom", SourceKind.HouseStoreroom, house.Id, InteriorStoreroom);
     }
 
-    private static string DescribeHouse(HousingManager* hm, HouseId house)
+    private static string DescribeHouse(HouseId house)
     {
         var area = string.Empty;
         if (Plugin.DataManager.GetExcelSheet<TerritoryType>().TryGetRow(house.TerritoryTypeId, out var terr))
             area = terr.PlaceName.ValueNullable?.Name.ExtractText() ?? string.Empty;
 
-        var ward = hm->GetCurrentWard() + 1;
-        var where = house.IsApartment ? $"Ward {ward} apartment" : $"Ward {ward}, Plot {house.PlotIndex + 1}";
+        var ward = house.WardIndex + 1;
+        var room = house.RoomNumber;
+        string where;
+        if (house.IsApartment)
+            where = $"Ward {ward} apartment, room {room}";
+        else if (room > 0)
+            where = $"Ward {ward}, Plot {house.PlotIndex + 1}, private chamber {room}";
+        else
+            where = $"Ward {ward}, Plot {house.PlotIndex + 1}";
+
         return string.IsNullOrEmpty(area) ? where : $"{area}, {where}";
     }
 

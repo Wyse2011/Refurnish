@@ -160,10 +160,14 @@ public sealed class MainWindow : Window
             ImGui.EndCombo();
         }
 
+        if (plugin.Scanner.InsideWithoutPermission)
+            ImGui.TextColored(Warn, "You don't have decorating permission here, so Refurnish can't read or change this room. "
+                                    + "In an FC house that usually means the main floor; your private chamber is tracked separately.");
+
         if (cache.Houses.Count == 0)
-            ImGui.TextColored(Warn, "Go inside a house you can decorate so Refurnish can record it.");
+            ImGui.TextColored(Warn, "Go inside a house or room you can decorate so Refurnish can record it.");
         else if (selectedHouse != 0 && !cache.Containers.ContainsKey($"house:{selectedHouse}:placed"))
-            ImGui.TextColored(Warn, "This house's placed furniture hasn't been read yet. Go inside it.");
+            ImGui.TextColored(Warn, "This room's placed furniture hasn't been read yet. Go inside it.");
     }
 
     // ---- Plan -----------------------------------------------------------------------------
@@ -480,6 +484,8 @@ public sealed class MainWindow : Window
             if (ImGui.SmallButton("Store"))
                 exec.Enqueue(new[] { new StoreJob(selectedHouse, key.Container, key.Slot, e.ItemId, e.ActualStain) });
             ImGui.EndDisabled();
+            if (!canStore && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(!inHouse ? "Go inside this room first." : "Finish the one-time setup at the top first.");
 
             ImGui.PopID();
         }
@@ -490,12 +496,22 @@ public sealed class MainWindow : Window
     {
         if (!ImGui.BeginPopup("##confirmStoreAll")) { confirmPending = false; return; }
 
-        var roomFree = LiveInventory.FreeSlots(LiveInventory.InteriorStoreroom);
-        ImGui.TextUnformatted($"Store {selected.Count} furnishings from this house?");
+        var hasRoom = plugin.Executor.ProfileFor(selectedHouse, StoreDestination.Storeroom) != null;
+        var hasBag = plugin.Executor.ProfileFor(selectedHouse, StoreDestination.Inventory) != null;
+        var roomFree = hasRoom ? LiveInventory.FreeSlots(LiveInventory.InteriorStoreroom) : 0;
+        var bagFree = hasBag ? Math.Max(0, LiveInventory.FreeSlots(LiveInventory.PlayerInventory)) : 0;
+
+        ImGui.TextUnformatted($"Put away {selected.Count} furnishings from this room?");
         ImGui.Spacing();
-        ImGui.TextWrapped(roomFree >= 0
-            ? $"The storeroom has {roomFree} free slots right now."
-            : "The storeroom isn't loaded; open its tab in the furnishings window first or storing will stop.");
+        if (hasRoom)
+            ImGui.TextWrapped(roomFree >= 0
+                ? $"Storeroom: {roomFree} free slots."
+                : "The storeroom isn't loaded; open its tab in the furnishings window first or storing will stop.");
+        if (hasBag)
+            ImGui.TextWrapped($"Inventory: {bagFree} free slots{(hasRoom ? " (used once the storeroom is full)" : "")}.");
+        var space = Math.Max(0, roomFree) + bagFree;
+        if (selected.Count > space)
+            ImGui.TextColored(Warn, $"Only room for about {space}. It will stop when everything is full.");
         ImGui.TextWrapped("Each item is re-checked before it's stored, and the run stops at the first problem.");
         ImGui.Spacing();
 
@@ -516,51 +532,69 @@ public sealed class MainWindow : Window
 
     private void DrawStoreSetup(bool inHouse, StoreProfile? roomProfile, StoreProfile? bagProfile)
     {
-        var learner = plugin.Learner;
-        var flags = roomProfile == null && bagProfile == null ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
-        var header = roomProfile != null ? "Setup: ready" : "Setup: needed (one time per house)";
-        if (!ImGui.CollapsingHeader($"{header}###storeSetup", flags)) return;
+        var ready = roomProfile != null || bagProfile != null;
 
-        ImGui.TextColored(roomProfile != null ? Good : Warn,
+        if (!ready)
+        {
+            // Not set up yet: make the one required step impossible to miss.
+            ImGui.Spacing();
+            ImGui.TextColored(Warn, "One-time setup for this room is needed before Refurnish can store anything.");
+            ImGui.TextWrapped("1. Press Learn below.");
+            ImGui.TextWrapped("2. Open the game's furnishing menu and put away any one item yourself, using \"Store\" "
+                              + "(to the storeroom) or \"Remove\" (to your inventory). In a private chamber or "
+                              + "apartment the game may only offer Remove; that works too.");
+            ImGui.TextWrapped("3. When Refurnish says \"Learned\", the Store buttons below unlock.");
+            DrawLearnControls(inHouse);
+            ImGui.Spacing();
+            DrawCaptureLog();
+            return;
+        }
+
+        if (!ImGui.CollapsingHeader("Setup: ready###storeSetup")) return;
+
+        ImGui.TextColored(roomProfile != null ? Good : Vector4.One * 0.7f,
             roomProfile != null ? "Store to storeroom: ready" : "Store to storeroom: not set up");
         ImGui.TextColored(bagProfile != null ? Good : Vector4.One * 0.7f,
-            bagProfile != null ? "Overflow to inventory: ready" : "Overflow to inventory: not set up (optional)");
+            bagProfile != null ? "Remove to inventory: ready" : "Remove to inventory: not set up (optional overflow)");
+        ImGui.TextWrapped("Learn the other one too by pressing Learn and putting away an item the other way.");
+        DrawLearnControls(inHouse);
+        DrawCaptureLog();
 
-        ImGui.TextWrapped("To keep things safe, Refurnish copies the exact request the game uses instead of guessing it. "
-                          + "Press Learn, then store one furnishing yourself with the game's menu. Do it again with "
-                          + "\"Remove\" (to inventory) if you want overflow when the storeroom is full. "
-                          + "This is needed once per house, and again after a game patch.");
-
-        if (learner.Active)
-        {
-            ImGui.TextColored(Warn, learner.Status);
-            if (ImGui.Button("Cancel learning")) learner.Cancel();
-        }
-        else
-        {
-            ImGui.BeginDisabled(!inHouse || plugin.Executor.Running);
-            if (ImGui.Button("Learn")) learner.Start();
-            ImGui.EndDisabled();
-            if (!inHouse) { ImGui.SameLine(); ImGui.TextDisabled("Go inside this house first."); }
-
-            if (!string.IsNullOrEmpty(learner.Status))
-                ImGui.TextColored(learner.LastSucceeded ? Good : Bad, learner.Status);
-        }
-
-        if (!learner.LastSucceeded && learner.LastCapture.Count > 0 && ImGui.TreeNode("Capture log"))
-        {
-            if (ImGui.SmallButton("Copy log"))
-                ImGui.SetClipboardText(string.Join("\n", learner.LastCapture.Select(c => c.ToString())));
-            foreach (var c in learner.LastCapture.TakeLast(30))
-                ImGui.TextDisabled(c.ToString());
-            ImGui.TreePop();
-        }
-
-        if ((roomProfile != null || bagProfile != null) && ImGui.SmallButton("Forget setup for this house"))
+        if (ImGui.SmallButton("Forget setup for this room"))
         {
             plugin.Configuration.StoreProfiles.RemoveAll(pr => pr.HouseId == selectedHouse);
             plugin.Configuration.Save();
         }
+    }
+
+    private void DrawLearnControls(bool inHouse)
+    {
+        var learner = plugin.Learner;
+        if (learner.Active)
+        {
+            ImGui.TextColored(Warn, learner.Status);
+            if (ImGui.Button("Cancel learning")) learner.Cancel();
+            return;
+        }
+
+        ImGui.BeginDisabled(!inHouse || plugin.Executor.Running);
+        if (ImGui.Button("Learn", new Vector2(120, 0))) learner.Start();
+        ImGui.EndDisabled();
+        if (!inHouse) { ImGui.SameLine(); ImGui.TextColored(Warn, "Go inside this room first."); }
+
+        if (!string.IsNullOrEmpty(learner.Status))
+            ImGui.TextColored(learner.LastSucceeded ? Good : Bad, learner.Status);
+    }
+
+    private void DrawCaptureLog()
+    {
+        var learner = plugin.Learner;
+        if (learner.LastSucceeded || learner.LastCapture.Count == 0 || !ImGui.TreeNode("Capture log")) return;
+        if (ImGui.SmallButton("Copy log"))
+            ImGui.SetClipboardText(string.Join("\n", learner.LastCapture.Select(c => c.ToString())));
+        foreach (var c in learner.LastCapture.TakeLast(30))
+            ImGui.TextDisabled(c.ToString());
+        ImGui.TreePop();
     }
 
     // ---- Data sources ---------------------------------------------------------------------
