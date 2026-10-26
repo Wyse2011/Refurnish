@@ -7,6 +7,7 @@ using System.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Lumina.Excel.Sheets;
+using Refurnish.Automation;
 using Refurnish.Inventory;
 using Refurnish.Layout;
 using Refurnish.Planning;
@@ -24,6 +25,11 @@ public sealed class MainWindow : Window
     private StainMatcher? stains;
 
     private LoadedLayout? layout;
+    private readonly HashSet<(int, int)> excluded = new();
+    private bool confirmPending;
+
+    /// <summary>The layout currently loaded, used by the store executor's live re-check.</summary>
+    public LoadedLayout? CurrentLayout => layout;
     private string? loadError;
     private ulong selectedHouse;
 
@@ -189,8 +195,7 @@ public sealed class MainWindow : Window
 
         if (ImGui.BeginTabItem($"Store ({p.Count(PlanAction.Store)})"))
         {
-            ImGui.TextWrapped("Placed in this house but not in the new layout. Store these first to free up space.");
-            DrawItemTable("store", p.Of(PlanAction.Store), showNeeded: false);
+            DrawStoreTab(p);
             ImGui.EndTabItem();
         }
 
@@ -347,6 +352,215 @@ public sealed class MainWindow : Window
         Section("MISSING:", p.Of(PlanAction.Missing), e => e.NeededStain);
         Section("DYE DIFFERS (needs re-dyeing):", p.Entries.Where(e => e.DyeMismatch), e => e.NeededStain);
         return sb.ToString();
+    }
+
+    // ---- Store tab --------------------------------------------------------------------------
+
+    private void DrawStoreTab(LayoutPlan p)
+    {
+        var exec = plugin.Executor;
+        var learner = plugin.Learner;
+        var inHouse = plugin.Scanner.CurrentHouseId == selectedHouse && selectedHouse != 0;
+        var roomProfile = exec.ProfileFor(selectedHouse, StoreDestination.Storeroom);
+        var bagProfile = exec.ProfileFor(selectedHouse, StoreDestination.Inventory);
+        var canStore = inHouse && (roomProfile != null || bagProfile != null) && !learner.Active;
+
+        DrawStoreSetup(inHouse, roomProfile, bagProfile);
+        ImGui.Separator();
+
+        var rows = p.Of(PlanAction.Store).Where(e => e.Item != null)
+            .OrderBy(e => ItemName(e.ItemId)).ThenBy(e => e.Item!.Container).ThenBy(e => e.Item!.Slot)
+            .ToList();
+        var selected = rows.Where(e => !excluded.Contains((e.Item!.Container, e.Item.Slot))).ToList();
+
+        // Run controls
+        if (exec.Running)
+        {
+            var done = exec.DoneThisRun;
+            var total = Math.Max(1, exec.TotalThisRun);
+            ImGui.ProgressBar((float)done / total, new Vector2(-1, 0), $"Storing {done} of {exec.TotalThisRun}");
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
+            if (ImGui.Button("STOP", new Vector2(-1, 32))) exec.Stop("Stopped by you.");
+            ImGui.PopStyleColor();
+            ImGui.TextDisabled("You can also type /refurnish stop.");
+        }
+        else
+        {
+            ImGui.BeginDisabled(!canStore || selected.Count == 0);
+            if (ImGui.Button($"Store all selected ({selected.Count})...", new Vector2(260, 28)))
+            {
+                confirmPending = true;
+                ImGui.OpenPopup("##confirmStoreAll");
+            }
+            ImGui.EndDisabled();
+            if (!canStore && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(!inHouse ? "Go inside this house first." : "Set up storing for this house first (see Setup above).");
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Select all")) excluded.Clear();
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Select none"))
+                foreach (var e in rows) excluded.Add((e.Item!.Container, e.Item.Slot));
+
+            var delay = plugin.Configuration.StoreDelaySeconds;
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.SliderFloat("Pause between items", ref delay, 0.5f, 5f, "%.1f s"))
+            {
+                plugin.Configuration.StoreDelaySeconds = delay;
+                plugin.Configuration.Save();
+            }
+        }
+
+        DrawConfirmPopup(selected);
+
+        if (exec.StopReason != null) ImGui.TextColored(Bad, $"Stopped: {exec.StopReason}");
+        else if (!exec.Running && exec.DoneThisRun > 0) ImGui.TextColored(Good, $"Done. Stored {exec.DoneThisRun} items.");
+
+        ImGui.Spacing();
+        if (rows.Count == 0)
+        {
+            ImGui.TextColored(Good, "Nothing to store. Everything placed here is part of the new layout.");
+            return;
+        }
+
+        if (!ImGui.BeginTable("##storeRows", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY))
+            return;
+
+        ImGui.TableSetupScrollFreeze(0, 1);
+        ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 24f);
+        ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 3f);
+        ImGui.TableSetupColumn("Dye", ImGuiTableColumnFlags.WidthStretch, 1.5f);
+        ImGui.TableSetupColumn("Where", ImGuiTableColumnFlags.WidthStretch, 1.2f);
+        ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthStretch, 2.5f);
+        ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 60f);
+        ImGui.TableHeadersRow();
+
+        foreach (var e in rows)
+        {
+            var key = (e.Item!.Container, e.Item.Slot);
+            ImGui.PushID($"{key.Container}_{key.Slot}");
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            var include = !excluded.Contains(key);
+            ImGui.BeginDisabled(exec.Running);
+            if (ImGui.Checkbox("##inc", ref include))
+            {
+                if (include) excluded.Remove(key);
+                else excluded.Add(key);
+            }
+            ImGui.EndDisabled();
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(ItemName(e.ItemId));
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(stains!.Name(e.ActualStain));
+            ImGui.TableNextColumn();
+            ImGui.TextDisabled($"Page {key.Container - LiveInventory.InteriorPlaced[0] + 1}, #{key.Slot + 1}");
+
+            ImGui.TableNextColumn();
+            var state = exec.StateOf(key.Container, key.Slot);
+            if (state != null)
+            {
+                var (st, note) = state.Value;
+                var color = st switch { JobState.Done => Good, JobState.Failed => Bad, _ => Warn };
+                var text = st switch
+                {
+                    JobState.Queued => "Queued",
+                    JobState.Working => "Storing...",
+                    JobState.Done => note ?? "Done",
+                    _ => "Failed",
+                };
+                ImGui.TextColored(color, text);
+                if (note != null && st == JobState.Failed && ImGui.IsItemHovered()) ImGui.SetTooltip(note);
+            }
+
+            ImGui.TableNextColumn();
+            ImGui.BeginDisabled(!canStore || exec.Running);
+            if (ImGui.SmallButton("Store"))
+                exec.Enqueue(new[] { new StoreJob(selectedHouse, key.Container, key.Slot, e.ItemId, e.ActualStain) });
+            ImGui.EndDisabled();
+
+            ImGui.PopID();
+        }
+        ImGui.EndTable();
+    }
+
+    private void DrawConfirmPopup(List<PlanEntry> selected)
+    {
+        if (!ImGui.BeginPopup("##confirmStoreAll")) { confirmPending = false; return; }
+
+        var roomFree = LiveInventory.FreeSlots(LiveInventory.InteriorStoreroom);
+        ImGui.TextUnformatted($"Store {selected.Count} furnishings from this house?");
+        ImGui.Spacing();
+        ImGui.TextWrapped(roomFree >= 0
+            ? $"The storeroom has {roomFree} free slots right now."
+            : "The storeroom isn't loaded; open its tab in the furnishings window first or storing will stop.");
+        ImGui.TextWrapped("Each item is re-checked before it's stored, and the run stops at the first problem.");
+        ImGui.Spacing();
+
+        if (ImGui.Button("Yes, store them", new Vector2(150, 0)) && confirmPending)
+        {
+            confirmPending = false;
+            plugin.Executor.Enqueue(selected.Select(e => new StoreJob(selectedHouse, e.Item!.Container, e.Item.Slot, e.ItemId, e.ActualStain)));
+            ImGui.CloseCurrentPopup();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel", new Vector2(100, 0)))
+        {
+            confirmPending = false;
+            ImGui.CloseCurrentPopup();
+        }
+        ImGui.EndPopup();
+    }
+
+    private void DrawStoreSetup(bool inHouse, StoreProfile? roomProfile, StoreProfile? bagProfile)
+    {
+        var learner = plugin.Learner;
+        var flags = roomProfile == null && bagProfile == null ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
+        var header = roomProfile != null ? "Setup: ready" : "Setup: needed (one time per house)";
+        if (!ImGui.CollapsingHeader($"{header}###storeSetup", flags)) return;
+
+        ImGui.TextColored(roomProfile != null ? Good : Warn,
+            roomProfile != null ? "Store to storeroom: ready" : "Store to storeroom: not set up");
+        ImGui.TextColored(bagProfile != null ? Good : Vector4.One * 0.7f,
+            bagProfile != null ? "Overflow to inventory: ready" : "Overflow to inventory: not set up (optional)");
+
+        ImGui.TextWrapped("To keep things safe, Refurnish copies the exact request the game uses instead of guessing it. "
+                          + "Press Learn, then store one furnishing yourself with the game's menu. Do it again with "
+                          + "\"Remove\" (to inventory) if you want overflow when the storeroom is full. "
+                          + "This is needed once per house, and again after a game patch.");
+
+        if (learner.Active)
+        {
+            ImGui.TextColored(Warn, learner.Status);
+            if (ImGui.Button("Cancel learning")) learner.Cancel();
+        }
+        else
+        {
+            ImGui.BeginDisabled(!inHouse || plugin.Executor.Running);
+            if (ImGui.Button("Learn")) learner.Start();
+            ImGui.EndDisabled();
+            if (!inHouse) { ImGui.SameLine(); ImGui.TextDisabled("Go inside this house first."); }
+
+            if (!string.IsNullOrEmpty(learner.Status))
+                ImGui.TextColored(learner.LastSucceeded ? Good : Bad, learner.Status);
+        }
+
+        if (!learner.LastSucceeded && learner.LastCapture.Count > 0 && ImGui.TreeNode("Capture log"))
+        {
+            if (ImGui.SmallButton("Copy log"))
+                ImGui.SetClipboardText(string.Join("\n", learner.LastCapture.Select(c => c.ToString())));
+            foreach (var c in learner.LastCapture.TakeLast(30))
+                ImGui.TextDisabled(c.ToString());
+            ImGui.TreePop();
+        }
+
+        if ((roomProfile != null || bagProfile != null) && ImGui.SmallButton("Forget setup for this house"))
+        {
+            plugin.Configuration.StoreProfiles.RemoveAll(pr => pr.HouseId == selectedHouse);
+            plugin.Configuration.Save();
+        }
     }
 
     // ---- Data sources ---------------------------------------------------------------------

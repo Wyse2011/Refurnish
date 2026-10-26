@@ -25,7 +25,8 @@ public sealed record PlanEntry(
     uint ItemId,
     byte NeededStain,
     byte ActualStain,
-    CachedContainer? Source)
+    CachedContainer? Source,
+    CachedItem? Item = null)
 {
     public bool DyeMismatch => Action is PlanAction.Keep or PlanAction.Retrieve && NeededStain != ActualStain;
 }
@@ -61,6 +62,7 @@ public static class LayoutPlanner
         public required uint ItemId;
         public required byte Stain;
         public required CachedContainer Source;
+        public required CachedItem Item;
         public required int Priority;
         public bool Used;
     }
@@ -97,7 +99,7 @@ public static class LayoutPlanner
                     pools[item.ItemId] = pool = new List<Instance>();
 
                 for (var q = 0; q < item.Quantity; q++)
-                    pool.Add(new Instance { ItemId = item.ItemId, Stain = item.Stain, Source = container, Priority = priority });
+                    pool.Add(new Instance { ItemId = item.ItemId, Stain = item.Stain, Source = container, Item = item, Priority = priority });
             }
         }
         foreach (var pool in pools.Values)
@@ -132,7 +134,7 @@ public static class LayoutPlanner
 
         // Anything still placed in the target house isn't in the new layout.
         foreach (var inst in pools.Values.SelectMany(p => p).Where(i => !i.Used && i.Source.Key == placedKey))
-            plan.Entries.Add(new PlanEntry(PlanAction.Store, inst.ItemId, 0, inst.Stain, inst.Source));
+            plan.Entries.Add(new PlanEntry(PlanAction.Store, inst.ItemId, 0, inst.Stain, inst.Source, inst.Item));
 
         return plan;
     }
@@ -141,7 +143,7 @@ public static class LayoutPlanner
     {
         inst.Used = true;
         var action = inst.Priority == 0 ? PlanAction.Keep : PlanAction.Retrieve;
-        plan.Entries.Add(new PlanEntry(action, need.ItemId, need.Stain, inst.Stain, inst.Source));
+        plan.Entries.Add(new PlanEntry(action, need.ItemId, need.Stain, inst.Stain, inst.Source, inst.Item));
     }
 
     // Lower is better: use what's already placed, then what's closest at hand, and only take

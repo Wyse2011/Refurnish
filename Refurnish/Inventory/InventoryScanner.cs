@@ -17,15 +17,13 @@ namespace Refurnish.Inventory;
 /// </summary>
 public sealed unsafe class InventoryScanner : IDisposable
 {
-    // Raw container numbers (FFXIVClientStructs InventoryType). Numbers rather than enum names so
-    // that newer house pages are picked up even if the bundled ClientStructs is a bit older.
-    private static readonly int[] PlayerInventory = { 0, 1, 2, 3 };
-    private static readonly int[] Saddlebag = { 4000, 4001, 4100, 4101 };
-    private static readonly int[] RetainerPages = Enumerable.Range(10000, 7).ToArray();
-    private const int FreeCompanyFirstPage = 20000;
-    private const int FreeCompanyPageCount = 5;
-    private static readonly int[] InteriorPlaced = Enumerable.Range(25003, 12).ToArray();
-    private static readonly int[] InteriorStoreroom = Enumerable.Range(27001, 11).ToArray();
+    private static int[] PlayerInventory => LiveInventory.PlayerInventory;
+    private static int[] Saddlebag => LiveInventory.Saddlebag;
+    private static int[] RetainerPages => LiveInventory.RetainerPages;
+    private const int FreeCompanyFirstPage = LiveInventory.FreeCompanyFirstPage;
+    private const int FreeCompanyPageCount = LiveInventory.FreeCompanyPageCount;
+    private static int[] InteriorPlaced => LiveInventory.InteriorPlaced;
+    private static int[] InteriorStoreroom => LiveInventory.InteriorStoreroom;
 
     private readonly CacheStore store;
     private DateTime nextScan = DateTime.MinValue;

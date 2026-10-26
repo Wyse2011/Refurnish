@@ -12,7 +12,8 @@ what to do to switch your house over to it:
 It matches dyes from the MakePlace file, prefers copies that are already close at hand, checks
 storeroom and inventory space, and can copy the whole plan to your clipboard as a checklist.
 
-This first version is **read-only**: it plans, you move the items. Automated retrieval is next.
+It can also **store the furnishings the new layout doesn't use**, one at a time or all at once,
+with safety checks on every item (see below). Automated retrieval is next.
 
 ## Install (for players)
 
@@ -46,6 +47,30 @@ work through the tabs. When everything is placed, load the same file in the Make
 move it all into position.
 
 Paintings in frames and fish in aquariums are counted separately and not yet planned.
+
+## Storing unneeded furnishings
+
+The **Store** tab lists every placed item the new layout doesn't use. You can press **Store** on
+a single row, or tick the rows you want and press **Store all selected**, which asks you to
+confirm first.
+
+**One-time setup per house.** Refurnish never guesses what to send the game. Press **Learn**,
+then store any one furnishing yourself with the game's own menu. Refurnish records the exact
+request the game sent and reuses it, changing only which item it points at. Do the same with
+"Remove" (to inventory) if you want items to overflow into your bags when the storeroom is full.
+Setup is tied to the house and to the game version, so it needs redoing after a patch.
+
+**Safety checks on every item:**
+
+- You must be inside the house the plan is for, with the storeroom loaded.
+- Right before each item, the plan is recalculated from a live read of the house. If the layout
+  now needs that item, it's skipped.
+- The exact slot is checked to still hold that item and dye.
+- There must be a free storeroom slot (or inventory slot, if overflow is set up).
+- After each request, Refurnish waits for the game to confirm the item actually moved. If it
+  doesn't within a few seconds, everything stops. Nothing is retried automatically.
+- One item at a time, with a pause between items (1.5 seconds by default, never under 0.5).
+- **STOP** button in the window, or type `/refurnish stop`.
 
 ---
 
