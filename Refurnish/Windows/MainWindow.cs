@@ -238,7 +238,9 @@ public sealed partial class MainWindow : Window
         var store = p.Count(PlanAction.Store);
         var missing = p.Count(PlanAction.Missing);
 
-        ImGui.TextUnformatted($"The layout uses {layout!.Interior.Count} furnishings.");
+        ImGui.TextUnformatted($"The layout uses {layout!.Interior.Count} furnishings."
+                              + (string.IsNullOrEmpty(layout.HouseSize) ? "" : $" It was made for: {layout.HouseSize}."));
+        DrawHeightCheck();
         ImGui.BulletText($"{keep} are already placed here.");
         ImGui.BulletText($"{retrieve} need to be brought out ({p.NeedsTrip} of those need a trip to a retainer, the FC chest or another house).");
         ImGui.BulletText($"{store} placed items aren't in the new layout and should be stored.");
@@ -274,6 +276,23 @@ public sealed partial class MainWindow : Window
         ImGui.Spacing();
         if (ImGui.Button("Copy checklist to clipboard"))
             ImGui.SetClipboardText(BuildChecklist(p));
+    }
+
+    /// <summary>Compares the layout's item heights with the floor you're standing on.</summary>
+    private void DrawHeightCheck()
+    {
+        var range = layout?.HeightRange;
+        var me = Plugin.ObjectTable.LocalPlayer;
+        if (range == null || me == null || plugin.Scanner.CurrentHouseId != selectedHouse) return;
+
+        var floor = me.Position.Y;
+        var (min, max) = range.Value;
+        if (min < floor - 0.5f || max > floor + 12f)
+            ImGui.TextColored(Warn, $"Heights in this layout run from {min:0.0} to {max:0.0}, but your floor here is at {floor:0.0}. "
+                                    + "It may have been made for a different room or floor. Items whose spot doesn't fit this room "
+                                    + "are placed near you instead.");
+        else
+            ImGui.TextColored(Good, $"Heights in this layout ({min:0.0} to {max:0.0}) fit this room (floor at {floor:0.0}).");
     }
 
     private void DrawGroupedBySource(IEnumerable<PlanEntry> entries, bool showNeeded)

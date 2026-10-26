@@ -370,6 +370,28 @@ public sealed class UiPlacer
     }
 
     /// <summary>The preview object the game shows while an item is picked from the list.</summary>
+    /// <summary>
+    /// Is this height somewhere items can go in the current room? It must not be below the lowest
+    /// of your feet and the furniture already here, nor more than 6 units above the highest of them
+    /// (enough for wall-mounted items and stacking).
+    /// </summary>
+    private static bool FitsThisRoom(float y, out string why)
+    {
+        var levels = new List<float>();
+        var me = Plugin.ObjectTable.LocalPlayer;
+        if (me != null) levels.Add(me.Position.Y);
+        var furniture = LiveFurniture.Read();
+        if (furniture != null) levels.AddRange(furniture.Values.Select(f => f.Position.Y));
+        if (levels.Count == 0) { why = string.Empty; return true; }
+
+        var low = levels.Min() - 0.5f;
+        var high = levels.Max() + 6f;
+        if (y < low) { why = $"at height {y:0.00}, below the floor here ({levels.Min():0.00})"; return false; }
+        if (y > high) { why = $"at height {y:0.00}, far above anything here (highest {levels.Max():0.00})"; return false; }
+        why = string.Empty;
+        return true;
+    }
+
     private static unsafe FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* Preview()
     {
         var hm = HousingManager.Instance();
@@ -510,7 +532,11 @@ public sealed class UiPlacer
     private (System.Numerics.Vector3 Spot, float Rotation, string What) ChooseSpot(Layout.Requirement need, PlaceSpot mode)
     {
         if (mode == PlaceSpot.Layout && need.HasPosition)
-            return (need.Position, need.Rotation, "to its layout spot");
+        {
+            if (FitsThisRoom(need.Position.Y, out var why))
+                return (need.Position, need.Rotation, "to its layout spot");
+            Log($"  The layout spot is {why}, so this item goes near you instead. The layout may be for a different room.");
+        }
 
         var me = Plugin.ObjectTable.LocalPlayer;
         var center = me?.Position ?? System.Numerics.Vector3.Zero;

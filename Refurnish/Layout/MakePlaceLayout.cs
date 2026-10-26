@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Text.Json;
 
@@ -62,6 +63,16 @@ public sealed class LoadedLayout
     public required List<uint> InteriorMaterials { get; init; }
 
     public string FileName => System.IO.Path.GetFileName(Path);
+
+    /// <summary>Lowest and highest item height in the layout (game coordinates), or null if none have positions.</summary>
+    public (float Min, float Max)? HeightRange
+    {
+        get
+        {
+            var ys = Interior.Where(r => r.HasPosition).Select(r => r.Position.Y).ToList();
+            return ys.Count == 0 ? null : (ys.Min(), ys.Max());
+        }
+    }
 
     public static LoadedLayout Load(string path, StainMatcher stains)
     {
