@@ -103,6 +103,14 @@ missed ones. It stops if you leave the room, close the furnishing window or leav
 tab, if the game's status changes unexpectedly, if a menu Refurnish didn't open appears, or after
 ten failures in a row. Don't click in the furnishing window while it works.
 
+**Full rebuild (no MakePlace needed):** on the Store tab, store everything in the room, then place
+the layout from the Retrieve tab with "At its spot in the layout". Each item goes straight to its
+exact spot and rotation, floor items first. For layouts with floating or sunk items, tick
+**Place anywhere**: Refurnish temporarily switches on the same game setting MakePlace uses (three
+single-byte flags that turn off the "Unable to place item" check) and switches it back off as soon
+as the run ends. If those flags can't be found after a game patch, the option does nothing and
+says so.
+
 > An earlier version sent placement messages directly, which left the game client broken (hidden
 > UI, locked commands, crashes). That approach is switched off and isn't used.
 

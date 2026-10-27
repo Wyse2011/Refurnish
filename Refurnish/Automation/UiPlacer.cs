@@ -152,6 +152,17 @@ public sealed class UiPlacer
         var problem = CanStart(targetHouse, placeMode);
         if (problem != null) { StopReason = problem; return; }
 
+        // Place anywhere (opt-in): switched on only for layout placing, and always switched back off
+        // when this run ends, however it ends.
+        if (placeMode != UiPlaceMode.Test && plugin.Configuration.UiPlaceSpot == PlaceSpot.Layout && plugin.Configuration.PlaceAnywhere)
+        {
+            if (!plugin.Anywhere.Enable())
+            {
+                StopReason = plugin.Anywhere.Error ?? "Couldn't switch on place anywhere.";
+                return;
+            }
+        }
+
         mode = placeMode;
         houseId = targetHouse;
         index = 0;
@@ -179,6 +190,7 @@ public sealed class UiPlacer
         nearMeCount = 0;
         heightShift = plugin.MainWindow.LayoutHeightShift();
         if (heightShift != 0) Log($"Layout heights shifted by {heightShift:+0.00;-0.00} to match this floor.");
+        if (plugin.Anywhere.Active) Log("Place anywhere is on for this run; it switches back off when the run ends.");
         badCells.Clear();
         spotTries = 0;
         nextAllowedUtc = DateTime.UtcNow + (placeMode == UiPlaceMode.Test ? TimeSpan.Zero : Countdown);
@@ -217,6 +229,7 @@ public sealed class UiPlacer
             CallbackTap.Fire(profile.MenuAddon, profile.CancelValues, profile.CancelClose);
         step = Step.Idle;
         Unhook();
+        plugin.Anywhere.Disable();
         StopReason = reason;
         Log($"Stopped: {reason}");
     }
@@ -325,7 +338,7 @@ public sealed class UiPlacer
         // usually sits on one of them, so it waits for the next pass. This isn't a failure.
         if (mode == UiPlaceMode.All && EffectiveSpot == PlaceSpot.Layout && Pass == 1)
         {
-            var t = LayoutTarget(resolved.Value.Need, heightShift, out _);
+            var t = LayoutTarget(resolved.Value.Need, heightShift, plugin.Anywhere.Active, out _);
             var me = Plugin.ObjectTable.LocalPlayer;
             if (t != null && me != null && t.Value.Y > me.Position.Y + GroundBand)
             {
@@ -384,7 +397,7 @@ public sealed class UiPlacer
         // in the storeroom (listed afterwards) rather than being dropped somewhere else.
         if (spotMode == PlaceSpot.Layout && !previewMoved)
         {
-            var target = LayoutTarget(pendingNeed, heightShift, out var why);
+            var target = LayoutTarget(pendingNeed, heightShift, plugin.Anywhere.Active, out var why);
             if (target == null)
             {
                 SkipNoSpot(name, why);
@@ -460,7 +473,7 @@ public sealed class UiPlacer
     /// of your feet and the furniture already here, nor more than 6 units above the highest of them
     /// (enough for wall-mounted items and stacking).
     /// </summary>
-    public static bool FitsThisRoom(float y, out string why)
+    public static bool FitsThisRoom(float y, bool anywhere, out string why)
     {
         // Compare with the floor you're standing on. (Furniture can't be trusted for the low end:
         // something placed oddly in the past could be sitting below the floor.)
@@ -473,8 +486,11 @@ public sealed class UiPlacer
             foreach (var f in furniture.Values)
                 if (f.Position.Y >= floor - 0.5f) highest = MathF.Max(highest, f.Position.Y);
 
-        if (y < floor - 0.5f) { why = $"at height {y:0.00}, below the floor you're on ({floor:0.00})"; return false; }
-        if (y > highest + 6f) { why = $"at height {y:0.00}, far above anything here (highest {highest:0.00})"; return false; }
+        // With place anywhere on, floating and sunk items are allowed; only wildly wrong heights are refused.
+        var low = anywhere ? floor - 20f : floor - 0.5f;
+        var high = anywhere ? floor + 40f : highest + 6f;
+        if (y < low) { why = $"at height {y:0.00}, below the floor you're on ({floor:0.00})"; return false; }
+        if (y > high) { why = $"at height {y:0.00}, far above anything here (highest {highest:0.00})"; return false; }
         why = string.Empty;
         return true;
     }
@@ -665,6 +681,7 @@ public sealed class UiPlacer
     {
         step = Step.Idle;
         Unhook();
+        plugin.Anywhere.Disable();
         var leftover = noSpotItems.Count > 0 ? $" {noSpotItems.Count} stayed in the storeroom because their layout spot couldn't be used." : "";
         var nearby = PlacedNearby > 0
             ? $" {PlacedNearby} of those are near you because their spot wasn't free yet: apply the layout in MakePlace to move them into position."
@@ -687,11 +704,11 @@ public sealed class UiPlacer
     /// The item's layout spot (with the floor shift applied), or null with the reason if it can't be
     /// used here: the layout has no position for it, or the spot is below your floor or far above the room.
     /// </summary>
-    public static System.Numerics.Vector3? LayoutTarget(Layout.Requirement need, float shift, out string why)
+    public static System.Numerics.Vector3? LayoutTarget(Layout.Requirement need, float shift, bool anywhere, out string why)
     {
         if (!need.HasPosition) { why = "the layout has no position for it"; return null; }
         var target = need.Position + new System.Numerics.Vector3(0, shift, 0);
-        if (!FitsThisRoom(target.Y, out why)) return null;
+        if (!FitsThisRoom(target.Y, anywhere, out why)) return null;
         if (!Sane(target, need.Rotation)) { why = "its layout spot looks wrong"; return null; }
         return target;
     }
@@ -702,7 +719,7 @@ public sealed class UiPlacer
         if (mode == PlaceSpot.Layout && need.HasPosition)
         {
             var target = need.Position + new System.Numerics.Vector3(0, heightShift, 0);
-            if (FitsThisRoom(target.Y, out var why))
+            if (FitsThisRoom(target.Y, plugin.Anywhere.Active, out var why))
                 return (target, need.Rotation, heightShift != 0 ? "to its layout spot (shifted to this floor)" : "to its layout spot");
             Log($"  The layout spot is {why}, so this item goes near you instead. The layout may be for a different room.");
         }

@@ -24,6 +24,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
     [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
     [PluginService] internal static IToastGui ToastGui { get; private set; } = null!;
+    [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
 
     internal static string Version => typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "?";
 
@@ -46,6 +47,7 @@ public sealed class Plugin : IDalamudPlugin
     public CallbackTap Tap { get; }
     public UiPlaceLearner UiLearner { get; }
     public UiPlacer UiPlacer { get; }
+    public PlaceAnywhere Anywhere { get; } = new();
     public FileDialogManager FileDialog { get; } = new();
     public WindowSystem WindowSystem { get; } = new("Refurnish");
     public MainWindow MainWindow { get; }
@@ -94,6 +96,7 @@ public sealed class Plugin : IDalamudPlugin
         Recorder.Dispose();
         Packets.Dispose();
         UiPlacer.Stop("Plugin unloaded.");
+        Anywhere.Dispose(); // always restore the game's switches, even if a run was cut short
         UiLearner.Cancel();
         PlacementTest.Dispose();
         Tap.Dispose();

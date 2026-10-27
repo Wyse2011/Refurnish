@@ -316,6 +316,18 @@ public sealed partial class MainWindow
             });
             if (spot == PlaceSpot.Layout)
             {
+                var anywhere = plugin.Configuration.PlaceAnywhere;
+                if (ImGui.Checkbox("Place anywhere, like MakePlace (floating, sunk and overlapping items)##uiAnywhere", ref anywhere))
+                {
+                    plugin.Configuration.PlaceAnywhere = anywhere;
+                    plugin.Configuration.Save();
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Turns off the game's \"Unable to place item\" check while Refurnish places, the same switch MakePlace uses, "
+                                     + "so a roof or sunk pillars can go exactly where the layout puts them. Refurnish switches it back off "
+                                     + "as soon as the run ends, however it ends.");
+                if (plugin.Anywhere.Error != null) ImGui.TextColored(Bad, plugin.Anywhere.Error);
+
                 var fallback = plugin.Configuration.LayoutFallbackNearMe;
                 if (ImGui.Checkbox("If an item can't go straight to its spot, place it near me for MakePlace to move##uiFallback", ref fallback))
                 {

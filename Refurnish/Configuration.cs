@@ -28,6 +28,12 @@ public class Configuration : IPluginConfiguration
     /// <summary>Shift the layout up or down so its floor matches the floor you're standing on.</summary>
     public bool MatchLayoutFloor { get; set; }
 
+    /// <summary>
+    /// While placing at layout spots, temporarily switch on the game's "place anywhere" (as MakePlace
+    /// does) so floating, sunk and overlapping items can go exactly where the layout puts them.
+    /// </summary>
+    public bool PlaceAnywhere { get; set; }
+
     /// <summary>In layout mode, place items that can't go straight to their spot near you instead (for MakePlace to move).</summary>
     public bool LayoutFallbackNearMe { get; set; } = true;
 

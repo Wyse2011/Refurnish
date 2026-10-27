@@ -279,6 +279,9 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Compares the layout's item heights with the floor you're standing on.</summary>
+    /// <summary>Height differences smaller than this are deliberately sunk flooring, not a different room.</summary>
+    private const float MinRealShift = 1.0f;
+
     /// <summary>
     /// How far to move layout heights so the layout's floor lands on the floor you're standing on,
     /// or 0 if that option is off (or can't be worked out).
@@ -290,7 +293,10 @@ public sealed partial class MainWindow : Window
         if (!plugin.Configuration.MatchLayoutFloor) return 0;
         if (plugin.Configuration.LayoutShiftOverride is { } manual) return manual;
         if (floor == null || me == null) return 0;
-        return me.Position.Y - floor.Value;
+        // A small difference is just flooring sunk on purpose (like lofts set slightly into the floor),
+        // not a different room. Only shift for a real mismatch.
+        var diff = me.Position.Y - floor.Value;
+        return MathF.Abs(diff) < MinRealShift ? 0 : diff;
     }
 
     /// <summary>Compares the layout's floor with yours, and offers to shift the layout to match.</summary>
@@ -302,9 +308,11 @@ public sealed partial class MainWindow : Window
 
         var floor = me.Position.Y;
         var diff = floor - layoutFloor.Value;
-        if (MathF.Abs(diff) < 0.25f && !plugin.Configuration.MatchLayoutFloor)
+        if (MathF.Abs(diff) < MinRealShift && plugin.Configuration.LayoutShiftOverride == null)
         {
-            ImGui.TextColored(Good, $"This layout's floor ({layoutFloor:0.00}) matches the floor you're on ({floor:0.00}).");
+            ImGui.TextColored(Good, MathF.Abs(diff) < 0.05f
+                ? $"This layout's floor matches the floor you're on ({floor:0.00}). No shift needed."
+                : $"This layout fits the floor you're on. (Its lowest items at {layoutFloor:0.00} are just set slightly into the floor; no shift needed.)");
             DrawFitCount();
             return;
         }
@@ -356,7 +364,7 @@ public sealed partial class MainWindow : Window
         if (needs.Count == 0) return;
 
         var shift = LayoutHeightShift();
-        var fit = needs.Count(n => Refurnish.Automation.UiPlacer.LayoutTarget(n, shift, out _) != null);
+        var fit = needs.Count(n => Refurnish.Automation.UiPlacer.LayoutTarget(n, shift, plugin.Configuration.PlaceAnywhere, out _) != null);
         var color = fit == needs.Count ? Good : fit == 0 ? Bad : Warn;
         ImGui.TextColored(color, $"With this shift, {fit} of {needs.Count} storeroom items have a layout spot that fits this room.");
     }
