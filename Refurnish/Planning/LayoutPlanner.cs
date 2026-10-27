@@ -68,7 +68,9 @@ public static class LayoutPlanner
         public bool Used;
     }
 
-    public static LayoutPlan Build(IReadOnlyList<Requirement> requirements, CharacterCache cache, ulong targetHouseId)
+    /// <param name="priority">Optional ranking of sources (lower = used first). Defaults to the single-character ranking.</param>
+    public static LayoutPlan Build(IReadOnlyList<Requirement> requirements, CharacterCache cache, ulong targetHouseId,
+        System.Func<CachedContainer, int>? priority = null)
     {
         var placedKey = $"house:{targetHouseId}:placed";
         var storeKey = $"house:{targetHouseId}:storeroom";
@@ -89,7 +91,7 @@ public static class LayoutPlanner
         foreach (var container in cache.Containers.Values)
         {
             var isTargetPlaced = container.Key == placedKey;
-            var priority = Priority(container, targetHouseId);
+            var rank = priority?.Invoke(container) ?? Priority(container, targetHouseId);
 
             foreach (var item in container.Items)
             {
@@ -100,7 +102,7 @@ public static class LayoutPlanner
                     pools[item.ItemId] = pool = new List<Instance>();
 
                 for (var q = 0; q < item.Quantity; q++)
-                    pool.Add(new Instance { ItemId = item.ItemId, Stain = item.Stain, Source = container, Item = item, Priority = priority });
+                    pool.Add(new Instance { ItemId = item.ItemId, Stain = item.Stain, Source = container, Item = item, Priority = rank });
             }
         }
         foreach (var pool in pools.Values)

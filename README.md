@@ -32,6 +32,23 @@ https://raw.githubusercontent.com/Wyse2011/Refurnish/main/repo.json
 
 Refurnish is a third-party plugin and is not affiliated with Square Enix or MakePlace.
 
+## Housing inventory
+
+The **Inventory** tab lists every housing furnishing Refurnish has seen across all your characters:
+in bags, saddlebags, each retainer, the FC chest, each room's storeroom, and placed in each room.
+Search it, filter by character or place, and combine or split the places per item. **Export to
+spreadsheet** saves a CSV file (opens in Excel or Google Sheets) to `Documents\Refurnish`. Shared
+places such as the FC chest are counted once, using the most recent check.
+
+## Trip list
+
+The **Trip list** tab turns a layout into a list of stops across all your characters: which
+character, where to go (summoning bell and retainer, FC chest, a storeroom), and which items to
+take. Items on other characters are routed through the FC chest: that character deposits them,
+then you collect them. It assumes all your characters share one FC. Items no character owns, and
+items owned in a different dye, are listed separately. **Copy trip list** gives a plain-text
+checklist.
+
 ## How to use it
 
 Refurnish can only see what the game has loaded, so it remembers things as you visit them:

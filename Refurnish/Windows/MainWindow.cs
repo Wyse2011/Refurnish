@@ -80,6 +80,12 @@ public sealed partial class MainWindow : Window
                 if (plan != null) DrawPlanTabs(plan);
             }
 
+            if (ImGui.BeginTabItem("Inventory###tabInventory"))
+            {
+                DrawInventoryTab();
+                ImGui.EndTabItem();
+            }
+
             if (ImGui.BeginTabItem("Data sources###tabSources"))
             {
                 DrawSources(cache);
@@ -194,6 +200,12 @@ public sealed partial class MainWindow : Window
         if (ImGui.BeginTabItem("Summary###tabSummary"))
         {
             DrawSummary(p);
+            ImGui.EndTabItem();
+        }
+
+        if (ImGui.BeginTabItem("Trip list###tabTrip"))
+        {
+            DrawTripTab();
             ImGui.EndTabItem();
         }
 

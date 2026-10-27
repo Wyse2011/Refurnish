@@ -47,6 +47,18 @@ public sealed class CacheStore : IDisposable
         return cache;
     }
 
+    /// <summary>Every character Refurnish has seen, loading any saved ones not yet in memory.</summary>
+    public List<CharacterCache> All()
+    {
+        foreach (var file in Directory.EnumerateFiles(folder, "cache_*.json"))
+        {
+            var hex = Path.GetFileNameWithoutExtension(file)["cache_".Length..];
+            if (ulong.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var id) && id != 0)
+                GetOrCreate(id, null);
+        }
+        return new List<CharacterCache>(caches.Values);
+    }
+
     public void MarkDirty(ulong contentId)
     {
         dirty.Add(contentId);
