@@ -74,6 +74,10 @@ public sealed class UiPlacer
     private readonly List<string> nearbyReasons = new();      // why each item went near you instead
     private readonly List<string> offSpot = new();            // placed at its spot, but landed somewhere slightly different
     private bool anywhereWasOn;
+    private readonly HashSet<(int, int, int)> usedSpots = new();   // layout spots filled this run
+    private (string Name, System.Numerics.Vector3 Spot, float Rotation, DateTime At)? pendingLanding;
+    private static (int, int, int) SpotKey(System.Numerics.Vector3 v) =>
+        ((int)MathF.Round(v.X * 100), (int)MathF.Round(v.Y * 100), (int)MathF.Round(v.Z * 100));
 
     /// <summary>Items that went near you instead of their spot, with the reason (last run).</summary>
     public IReadOnlyList<string> NearbyReasons => nearbyReasons;
@@ -207,6 +211,8 @@ public sealed class UiPlacer
         PlacedNearby = 0;
         nearbyReasons.Clear();
         offSpot.Clear();
+        usedSpots.Clear();
+        pendingLanding = null;
         lastProblem.Clear();
         noSpot.Clear();
         noSpotItems.Clear();
@@ -260,6 +266,7 @@ public sealed class UiPlacer
         var profile = plugin.Configuration.UiPlace;
         if (profile != null && CallbackTap.IsVisible(profile.MenuAddon))
             CallbackTap.Fire(profile.MenuAddon, profile.CancelValues, profile.CancelClose);
+        EvaluateLanding(force: true);
         step = Step.Idle;
         Unhook();
         plugin.Anywhere.Disable();
@@ -289,6 +296,7 @@ public sealed class UiPlacer
 
     private void StepReady(UiPlaceProfile profile)
     {
+        EvaluateLanding(force: false);
         if (DateTime.UtcNow < nextAllowedUtc) return;
 
         if (!CallbackTap.StoreroomTabShown()) { Stop("The furnishing window left the storeroom tab."); return; }
@@ -366,12 +374,13 @@ public sealed class UiPlacer
             CloseAndNext(profile); // not needed by the layout
             return;
         }
+        var need = ChooseRequirement(resolved.Value.Need);
 
         // Layout mode: put floor-standing items (tables, partitions, lofts) in first. Anything higher
         // usually sits on one of them, so it waits for the next pass. This isn't a failure.
         if (mode == UiPlaceMode.All && EffectiveSpot == PlaceSpot.Layout && Pass == 1)
         {
-            var t = LayoutTarget(resolved.Value.Need, heightShift, plugin.Anywhere.Active, out _);
+            var t = LayoutTarget(need, heightShift, plugin.Anywhere.Active, out _);
             var me = Plugin.ObjectTable.LocalPlayer;
             if (t != null && me != null && t.Value.Y > me.Position.Y + GroundBand)
             {
@@ -390,7 +399,7 @@ public sealed class UiPlacer
 
         // Don't choose Place yet: the game first spawns a preview of the item on the floor, and
         // Place uses the preview's position. Wait for it.
-        pendingNeed = resolved.Value.Need;
+        pendingNeed = need;
         previewSeenUtc = null;
         previewMoved = false;
         step = Step.WaitPreview;
@@ -563,7 +572,11 @@ public sealed class UiPlacer
             previousGameError = null;
             spotTries = 0;
             Log($"Placed {ItemName(selectedItem)}.");
-            if (placingAtLayoutSpot) CheckLanding();
+            if (placingAtLayoutSpot)
+            {
+                usedSpots.Add(SpotKey(sentSpot));
+                pendingLanding = (ItemName(selectedItem), sentSpot, pendingNeed.Rotation, DateTime.UtcNow);
+            }
             if (mode == UiPlaceMode.One) { Finish(); return; }
             // The list shifts up after an item leaves, so the same position now holds the next item.
             step = Step.Ready;
@@ -682,7 +695,7 @@ public sealed class UiPlacer
         if (mode == UiPlaceMode.All && spotOverride == null && plugin.Configuration.UiPlaceSpot == PlaceSpot.Layout
             && plugin.Configuration.LayoutFallbackNearMe && leftovers > 0)
         {
-            Log($"{leftovers} item(s) couldn't go straight to their spot. Placing them near you so MakePlace can move them into position.");
+            Log($"{leftovers} item(s) couldn't go straight to their spot. Placing them on the floor at their spot (or near you) for ReMakePlace to finish.");
             foreach (var key in failedThisPass)
                 nearbyReasons.Add(lastProblem.TryGetValue(key, out var why) ? why : $"storeroom slot {key.Item1}/{key.Item2}: no reason recorded");
             nearbyReasons.AddRange(noSpotItems);
@@ -718,12 +731,14 @@ public sealed class UiPlacer
 
     private void Finish()
     {
+        EvaluateLanding(force: true);
         step = Step.Idle;
         Unhook();
         plugin.Anywhere.Disable();
         var leftover = noSpotItems.Count > 0 ? $" {noSpotItems.Count} stayed in the storeroom because their layout spot couldn't be used." : "";
         var nearby = PlacedNearby > 0
-            ? $" {PlacedNearby} of those are near you because their spot wasn't free yet: apply the layout in MakePlace to move them into position."
+            ? $" {PlacedNearby} of those are floor furniture the game won't place floating or sunk; they're standing on the floor at their spot "
+              + "(or near you). Apply the layout in ReMakePlace to lift or sink them into place."
             : "";
         Summary = mode == UiPlaceMode.Test
             ? "Test finished."
@@ -732,28 +747,58 @@ public sealed class UiPlacer
     }
 
     /// <summary>Compares where the item really landed with its layout spot, and records any difference.</summary>
-    private void CheckLanding()
+    /// <summary>
+    /// Half a second after an item is placed at its layout spot, finds it in the room by position and
+    /// compares where it really is (and which way it faces) with the layout.
+    /// </summary>
+    private void EvaluateLanding(bool force)
     {
+        if (pendingLanding == null) return;
+        var (name, spot, rotation, at) = pendingLanding.Value;
+        if (!force && DateTime.UtcNow - at < TimeSpan.FromSeconds(0.5)) return;
+        pendingLanding = null;
+
         var now = LiveFurniture.Read();
-        if (now == null) return;
-        var added = LiveFurniture.New(furnitureBeforePlace, now);
-        var name = ItemName(selectedItem);
-        if (added.Count == 0)
+        if (now == null || now.Count == 0) return;
+        var landed = now.Values.OrderBy(f => System.Numerics.Vector3.Distance(f.Position, spot)).First();
+        var dist = System.Numerics.Vector3.Distance(landed.Position, spot);
+        if (dist > 0.5f)
         {
-            offSpot.Add($"{name}: placed, but couldn't find it in the room's furniture list to check where it landed.");
+            offSpot.Add($"{name}: nothing found at its spot ({spot.X:0.000}, {spot.Y:0.000}, {spot.Z:0.000}); the nearest furniture is {dist:0.00} away.");
             return;
         }
-        var landed = added.OrderBy(a => System.Numerics.Vector3.Distance(a.Position, sentSpot)).First();
-        var dist = System.Numerics.Vector3.Distance(landed.Position, sentSpot);
-        var turn = LiveFurniture.AngleDiff(landed.Rotation, pendingNeed.Rotation);
+        var turn = LiveFurniture.AngleDiff(landed.Rotation, rotation);
         if (dist > 0.02f || turn > 0.02f)
         {
-            var line = $"{name}: wanted ({sentSpot.X:0.000}, {sentSpot.Y:0.000}, {sentSpot.Z:0.000}) facing {Deg(pendingNeed.Rotation):0.0}°, "
+            var line = $"{name}: wanted ({spot.X:0.000}, {spot.Y:0.000}, {spot.Z:0.000}) facing {Deg(rotation):0.0}°, "
                        + $"landed ({landed.Position.X:0.000}, {landed.Position.Y:0.000}, {landed.Position.Z:0.000}) facing {Deg(landed.Rotation):0.0}° "
                        + $"(off by {dist:0.000} and {Deg(turn):0.0}°)";
             offSpot.Add(line);
             Log("  " + line);
         }
+    }
+
+    /// <summary>
+    /// When the layout has several copies of an item, picks a spot for this copy that nothing is
+    /// sitting on yet (read live from the room) and that wasn't already filled this run, so copies
+    /// don't all get sent to the same spot. Falls back to the planner's choice if every spot is taken.
+    /// </summary>
+    private Layout.Requirement ChooseRequirement(Layout.Requirement planned)
+    {
+        var layout = plugin.MainWindow.CurrentLayout;
+        if (layout == null || !planned.HasPosition) return planned;
+
+        var furniture = LiveFurniture.Read()?.Values.Select(f => f.Position).ToList() ?? new List<System.Numerics.Vector3>();
+        var shift = new System.Numerics.Vector3(0, heightShift, 0);
+        foreach (var r in layout.Interior)
+        {
+            if (r.ItemId != planned.ItemId || r.Stain != planned.Stain || !r.HasPosition) continue;
+            var p = r.Position + shift;
+            if (usedSpots.Contains(SpotKey(p))) continue;
+            if (furniture.Any(f => System.Numerics.Vector3.Distance(f, p) < 0.05f)) continue;
+            return r;
+        }
+        return planned;
     }
 
     private static float Deg(float radians) => radians * 180f / MathF.PI;
@@ -788,6 +833,19 @@ public sealed class UiPlacer
             if (FitsThisRoom(target.Y, plugin.Anywhere.Active, out var why))
                 return (target, need.Rotation, heightShift != 0 ? "to its layout spot (shifted to this floor)" : "to its layout spot");
             Log($"  The layout spot is {why}, so this item goes near you instead. The layout may be for a different room.");
+        }
+
+        // Final pass for layout items the game wouldn't place floating or sunk: put them at their exact
+        // layout position and rotation, but standing on the floor, so only their height is left to fix.
+        if (spotOverride != null && need.HasPosition)
+        {
+            var me = Plugin.ObjectTable.LocalPlayer;
+            if (me != null)
+            {
+                var under = new System.Numerics.Vector3(need.Position.X, me.Position.Y, need.Position.Z);
+                if (!badCells.Contains(Cell(under)) && Sane(under, need.Rotation))
+                    return (under, need.Rotation, "to the floor at its layout spot (only its height is left to fix)");
+            }
         }
 
         var free = FindFreeSpot();

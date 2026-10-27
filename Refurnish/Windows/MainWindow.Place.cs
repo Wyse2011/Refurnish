@@ -329,7 +329,7 @@ public sealed partial class MainWindow
                 if (plugin.Anywhere.Error != null) ImGui.TextColored(Bad, plugin.Anywhere.Error);
 
                 var fallback = plugin.Configuration.LayoutFallbackNearMe;
-                if (ImGui.Checkbox("If an item can't go straight to its spot, place it near me for MakePlace to move##uiFallback", ref fallback))
+                if (ImGui.Checkbox("If an item can't go straight to its spot, put it on the floor at its spot (or near me) for ReMakePlace to finish##uiFallback", ref fallback))
                 {
                     plugin.Configuration.LayoutFallbackNearMe = fallback;
                     plugin.Configuration.Save();
@@ -370,7 +370,7 @@ public sealed partial class MainWindow
 
         if (!placer.Running && (placer.NearbyReasons.Count > 0 || placer.OffSpot.Count > 0 || placer.Placed > 0))
         {
-            if (placer.NearbyReasons.Count > 0 && ImGui.TreeNodeEx($"Placed near you instead: {placer.NearbyReasons.Count} (why)###uiNearbyWhy"))
+            if (placer.NearbyReasons.Count > 0 && ImGui.TreeNodeEx($"Left for ReMakePlace to finish: {placer.NearbyReasons.Count} (why)###uiNearbyWhy"))
             {
                 foreach (var line in placer.NearbyReasons) ImGui.BulletText(line);
                 ImGui.TreePop();
