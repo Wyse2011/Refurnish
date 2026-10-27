@@ -223,6 +223,12 @@ public sealed partial class MainWindow : Window
             ImGui.EndTabItem();
         }
 
+        if (ImGui.BeginTabItem("Check layout###tabCheck"))
+        {
+            DrawCheckTab();
+            ImGui.EndTabItem();
+        }
+
         if (ImGui.BeginTabItem($"Already placed ({p.Count(PlanAction.Keep)})###tabKeep"))
         {
             ImGui.TextWrapped("These stay. MakePlace will move them into position.");
@@ -763,6 +769,64 @@ public sealed partial class MainWindow : Window
     }
 
     // ---- Data sources ---------------------------------------------------------------------
+
+    private List<CheckLine>? checkLines;
+    private DateTime checkedAt;
+
+    /// <summary>Compares every layout spot with what's really in the room right now.</summary>
+    private void DrawCheckTab()
+    {
+        var inRoom = plugin.Scanner.CurrentHouseId == selectedHouse && selectedHouse != 0;
+        ImGui.TextWrapped("Checks every spot in the layout against the room right now: the right item, in the right dye, "
+                          + "at the right position (within 5 cm) and facing the right way (within 1°). It only reads; nothing is moved.");
+
+        ImGui.BeginDisabled(!inRoom || layout == null);
+        if (ImGui.Button("Check now", new Vector2(140, 0)))
+        {
+            checkLines = LayoutCheck.Run(layout!, LayoutHeightShift());
+            checkedAt = DateTime.Now;
+        }
+        ImGui.EndDisabled();
+        if (!inRoom) { ImGui.SameLine(); ImGui.TextColored(Warn, "Go inside this room first."); }
+
+        if (checkLines == null) return;
+
+        var correct = checkLines.Count(l => l.Result == CheckResult.Correct);
+        var extra = checkLines.Count(l => l.Result == CheckResult.Extra);
+        var wanted = checkLines.Count - extra;
+        ImGui.SameLine();
+        ImGui.TextDisabled($"checked at {checkedAt:HH:mm:ss}");
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Copy report##check"))
+            ImGui.SetClipboardText(LayoutCheck.Report(checkLines, ItemName, s => stains!.Name(s)));
+
+        var unknown = checkLines.Count(l => l.ItemId == 0);
+        if (unknown > 0)
+            ImGui.TextColored(Warn, $"{unknown} placed item(s) couldn't be identified, so they may show as missing or extra.");
+
+        ImGui.Spacing();
+        ImGui.TextColored(correct == wanted ? Good : Warn, $"{correct} of {wanted} layout spots are exactly right.");
+        if (extra > 0) ImGui.TextColored(Warn, $"{extra} item(s) in the room aren't in the layout.");
+
+        var order = new[] { CheckResult.Missing, CheckResult.OutOfPlace, CheckResult.WrongRotation, CheckResult.WrongDye, CheckResult.Extra };
+        var titles = new Dictionary<CheckResult, string>
+        {
+            [CheckResult.Missing] = "Missing",
+            [CheckResult.OutOfPlace] = "Out of place",
+            [CheckResult.WrongRotation] = "Facing the wrong way",
+            [CheckResult.WrongDye] = "Wrong dye",
+            [CheckResult.Extra] = "In the room but not in the layout",
+        };
+        foreach (var result in order)
+        {
+            var group = checkLines.Where(l => l.Result == result).ToList();
+            if (group.Count == 0) continue;
+            if (!ImGui.TreeNodeEx($"{titles[result]}: {group.Count}###check{result}", ImGuiTreeNodeFlags.DefaultOpen)) continue;
+            foreach (var l in group.OrderBy(l => ItemName(l.ItemId)))
+                ImGui.BulletText(LayoutCheck.Describe(l, ItemName, s => stains!.Name(s)));
+            ImGui.TreePop();
+        }
+    }
 
     private void DrawSources(CharacterCache cache)
     {

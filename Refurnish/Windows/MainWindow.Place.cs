@@ -329,9 +329,15 @@ public sealed partial class MainWindow
                 if (plugin.Anywhere.Error != null) ImGui.TextColored(Bad, plugin.Anywhere.Error);
 
                 var fallback = plugin.Configuration.LayoutFallbackNearMe;
-                if (ImGui.Checkbox("If an item can't go straight to its spot, put it on the floor at its spot (or near me) for ReMakePlace to finish##uiFallback", ref fallback))
+                if (ImGui.Checkbox("If an item can't go straight to its spot, stand it on the floor under its spot to lift later##uiFallback", ref fallback))
                 {
                     plugin.Configuration.LayoutFallbackNearMe = fallback;
+                    plugin.Configuration.Save();
+                }
+                var autoLift = plugin.Configuration.AutoFinishHeights;
+                if (ImGui.Checkbox("Then finish heights automatically (keep the furnishing window in Rotate mode)##uiAutoLift", ref autoLift))
+                {
+                    plugin.Configuration.AutoFinishHeights = autoLift;
                     plugin.Configuration.Save();
                 }
                 DrawHeightCheck();

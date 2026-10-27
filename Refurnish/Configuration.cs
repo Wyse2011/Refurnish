@@ -34,6 +34,9 @@ public class Configuration : IPluginConfiguration
     /// </summary>
     public bool PlaceAnywhere { get; set; }
 
+    /// <summary>After Place all, lift or sink the floor-placed items into place straight away (needs Rotate mode).</summary>
+    public bool AutoFinishHeights { get; set; } = true;
+
     /// <summary>In layout mode, place items that can't go straight to their spot near you instead (for MakePlace to move).</summary>
     public bool LayoutFallbackNearMe { get; set; } = true;
 

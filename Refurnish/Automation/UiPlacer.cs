@@ -77,6 +77,7 @@ public sealed class UiPlacer
     private readonly HashSet<(int, int, int)> usedSpots = new();   // layout spots filled this run
     private readonly HashSet<(int, int, int)> refusedSpots = new(); // layout spots the game refused this pass
     private readonly List<LiftJob> liftJobs = new();               // items put on the floor under their spot
+    private readonly Dictionary<(int, int), Layout.Requirement> floorTarget = new(); // refused: place on the floor under this spot next
     private LiftJob? pendingLift;
 
     /// <summary>Items standing on the floor under their layout spot, for "Finish heights" (last run).</summary>
@@ -221,6 +222,7 @@ public sealed class UiPlacer
         usedSpots.Clear();
         refusedSpots.Clear();
         liftJobs.Clear();
+        floorTarget.Clear();
         pendingLift = null;
         pendingLanding = null;
         lastProblem.Clear();
@@ -385,6 +387,7 @@ public sealed class UiPlacer
             return;
         }
         var (need, allRefused) = ChooseRequirement(resolved.Value.Need);
+        if (floorTarget.TryGetValue(key, out var refusedNeed)) { need = refusedNeed; allRefused = false; }
         if (allRefused && EffectiveSpot == PlaceSpot.Layout)
         {
             Fail(key, $"{name}: the game already refused every free layout spot for it this pass; it'll be tried again later.", countsTowardStop: false);
@@ -394,7 +397,7 @@ public sealed class UiPlacer
 
         // Layout mode: put floor-standing items (tables, partitions, lofts) in first. Anything higher
         // usually sits on one of them, so it waits for the next pass. This isn't a failure.
-        if (mode == UiPlaceMode.All && EffectiveSpot == PlaceSpot.Layout && Pass == 1)
+        if (mode == UiPlaceMode.All && EffectiveSpot == PlaceSpot.Layout && Pass == 1 && !floorTarget.ContainsKey(key))
         {
             var t = LayoutTarget(need, heightShift, plugin.Anywhere.Active, out _);
             var me = Plugin.ObjectTable.LocalPlayer;
@@ -450,6 +453,23 @@ public sealed class UiPlacer
         if (DateTime.UtcNow - stepStartedUtc < MinWaitAfterMenu) return;
 
         var spotMode = EffectiveSpot;
+
+        // Refused at its spot earlier: stand it on the floor directly under (or over) the spot, facing
+        // the right way, and remember it for lifting.
+        if (spotOverride == null && floorTarget.TryGetValue(selected, out var ft) && !previewMoved)
+        {
+            var me = Plugin.ObjectTable.LocalPlayer;
+            var target = ft.Position + new System.Numerics.Vector3(0, heightShift, 0);
+            var under = new System.Numerics.Vector3(target.X, me?.Position.Y ?? 0, target.Z);
+            preview->SetPosition(under.X, under.Y, under.Z);
+            preview->SetRotation(ft.Rotation);
+            sentSpot = under;
+            previewMoved = true;
+            previewMovedUtc = DateTime.UtcNow;
+            pendingLift = new LiftJob(name, under, target, ft.Rotation);
+            Log($"  {name}: on the floor under its spot, at ({under.X:0.00}, {under.Y:0.00}, {under.Z:0.00}).");
+            return;
+        }
 
         // "At its spot in the layout" means exactly that: if the spot can't be used, the item stays
         // in the storeroom (listed afterwards) rather than being dropped somewhere else.
@@ -519,7 +539,7 @@ public sealed class UiPlacer
 
         placedCountBefore = LiveInventory.CountItem(LiveInventory.InteriorPlaced, selectedItem);
         furnitureBeforePlace = LiveFurniture.Read() ?? new Dictionary<int, LiveFurniture.Entry>();
-        placingAtLayoutSpot = spotMode == PlaceSpot.Layout && previewMoved;
+        placingAtLayoutSpot = spotMode == PlaceSpot.Layout && previewMoved && !floorTarget.ContainsKey(selected);
         gameError = null;
         diagnosticLogged = false;
         if (!CallbackTap.Fire(profile.MenuAddon, profile.PlaceValues, profile.PlaceClose))
@@ -592,7 +612,8 @@ public sealed class UiPlacer
             previousGameError = null;
             spotTries = 0;
             Log($"Placed {ItemName(selectedItem)}.");
-            if (pendingLift != null) { liftJobs.Add(pendingLift); pendingLift = null; }
+            if (pendingLift != null) { liftJobs.Add(pendingLift); pendingLift = null; if (spotOverride == null) PlacedNearby++; }
+            floorTarget.Remove(selected);
             if (placingAtLayoutSpot)
             {
                 usedSpots.Add(SpotKey(sentSpot));
@@ -637,6 +658,21 @@ public sealed class UiPlacer
         // the next copy tries a different one, and don't count it as a malfunction.
         var expectedRefusal = placingAtLayoutSpot && gameError != null;
         if (expectedRefusal) refusedSpots.Add(SpotKey(sentSpot));
+
+        // Faster: rather than retrying this spot on every pass (the game refuses floor furniture
+        // floating or sunk every time), put the item on the floor under its spot right now and
+        // lift it into place at the end.
+        if (expectedRefusal && plugin.Configuration.LayoutFallbackNearMe && pendingNeed.HasPosition && !floorTarget.ContainsKey(selected))
+        {
+            floorTarget[selected] = pendingNeed;
+            usedSpots.Add(SpotKey(sentSpot)); // this spot belongs to this item now; other copies use others
+            Log($"  {ItemName(selectedItem)}: putting it on the floor under its spot to lift into place at the end.");
+            gameError = null;
+            if (CallbackTap.IsVisible(profile.MenuAddon)) CloseMenu(profile, finishAfter: false);
+            else { step = Step.Ready; nextAllowedUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1); }
+            return; // same list position, so the same item is picked again
+        }
+
         Fail(selected, $"{ItemName(selectedItem)}: {reason}.", countsTowardStop: !expectedRefusal);
         if (step == Step.Idle) return;
 
@@ -768,13 +804,28 @@ public sealed class UiPlacer
         plugin.Anywhere.Disable();
         var leftover = noSpotItems.Count > 0 ? $" {noSpotItems.Count} stayed in the storeroom because their layout spot couldn't be used." : "";
         var nearby = PlacedNearby > 0
-            ? $" {PlacedNearby} of those are floor furniture the game won't place floating or sunk; they're standing on the floor at their spot "
-              + "(or near you). Apply the layout in ReMakePlace to lift or sink them into place."
+            ? $" {PlacedNearby} of those are floor furniture the game won't place floating or sunk; they're standing on the floor under their spot, "
+              + "ready for Finish heights."
             : "";
         Summary = mode == UiPlaceMode.Test
             ? "Test finished."
             : (FinalFailures > 0 ? $"Done. Placed {Placed}; {FinalFailures} couldn't be placed (see the log)." : $"Done. Placed {Placed}.") + nearby + leftover;
         Log(Summary);
+
+        // Go straight on to lifting the floor-placed items, if you're in Rotate mode.
+        if (mode == UiPlaceMode.All && liftJobs.Count > 0 && plugin.Configuration.AutoFinishHeights)
+        {
+            var problem = plugin.Lifter.CanStart(houseId);
+            if (problem == null)
+            {
+                Log($"Finishing heights for {liftJobs.Count} item(s) now.");
+                plugin.Lifter.Start(houseId, liftJobs);
+            }
+            else
+            {
+                Log($"Finish heights didn't start by itself: {problem}");
+            }
+        }
     }
 
     /// <summary>Compares where the item really landed with its layout spot, and records any difference.</summary>
