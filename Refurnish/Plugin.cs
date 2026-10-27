@@ -48,6 +48,8 @@ public sealed class Plugin : IDalamudPlugin
     public UiPlaceLearner UiLearner { get; }
     public UiPlacer UiPlacer { get; }
     public PlaceAnywhere Anywhere { get; } = new();
+    public HousingEditor Editor { get; } = new();
+    public Lifter Lifter { get; }
     public FileDialogManager FileDialog { get; } = new();
     public WindowSystem WindowSystem { get; } = new("Refurnish");
     public MainWindow MainWindow { get; }
@@ -69,6 +71,7 @@ public sealed class Plugin : IDalamudPlugin
         PlacementTest = new PlacementRecorder(Tap);
         UiLearner = new UiPlaceLearner(this);
         UiPlacer = new UiPlacer(this);
+        Lifter = new Lifter(this);
         Framework.Update += OnFrameworkUpdate;
 
         MainWindow = new MainWindow(this);
@@ -96,6 +99,7 @@ public sealed class Plugin : IDalamudPlugin
         Recorder.Dispose();
         Packets.Dispose();
         UiPlacer.Stop("Plugin unloaded.");
+        Lifter.Stop("Plugin unloaded.");
         Anywhere.Dispose(); // always restore the game's switches, even if a run was cut short
         UiLearner.Cancel();
         PlacementTest.Dispose();
@@ -113,6 +117,7 @@ public sealed class Plugin : IDalamudPlugin
             Executor.Stop("Stopped with /refurnish stop.");
             Placer.Stop("Stopped with /refurnish stop.");
             UiPlacer.Stop("Stopped with /refurnish stop.");
+            Lifter.Stop("Stopped with /refurnish stop.");
             return;
         }
         MainWindow.Toggle();
@@ -129,6 +134,7 @@ public sealed class Plugin : IDalamudPlugin
             PlacementTest.Update();
             UiLearner.Update();
             UiPlacer.Update();
+            Lifter.Update();
             Packets.Update();
         }
         catch (System.Exception ex)
@@ -137,6 +143,7 @@ public sealed class Plugin : IDalamudPlugin
             Executor.Stop("Something went wrong, so storing stopped. See /xllog for details.");
             Placer.Stop("Something went wrong, so placing stopped. See /xllog for details.");
             UiPlacer.Stop("Something went wrong, so placing stopped. See /xllog for details.");
+            Lifter.Stop("Something went wrong, so it stopped. See /xllog for details.");
             UiLearner.Cancel();
             Learner.Cancel();
             PlaceLearner.Cancel();

@@ -76,6 +76,11 @@ public sealed class UiPlacer
     private bool anywhereWasOn;
     private readonly HashSet<(int, int, int)> usedSpots = new();   // layout spots filled this run
     private readonly HashSet<(int, int, int)> refusedSpots = new(); // layout spots the game refused this pass
+    private readonly List<LiftJob> liftJobs = new();               // items put on the floor under their spot
+    private LiftJob? pendingLift;
+
+    /// <summary>Items standing on the floor under their layout spot, for "Finish heights" (last run).</summary>
+    public IReadOnlyList<LiftJob> LiftJobs => liftJobs;
     private (string Name, System.Numerics.Vector3 Spot, float Rotation, DateTime At)? pendingLanding;
     private static (int, int, int) SpotKey(System.Numerics.Vector3 v) =>
         ((int)MathF.Round(v.X * 100), (int)MathF.Round(v.Y * 100), (int)MathF.Round(v.Z * 100));
@@ -179,6 +184,7 @@ public sealed class UiPlacer
         if (plugin.Executor.Running || plugin.Learner.Active || plugin.UiLearner.Active) return "Another Refurnish action is running.";
         if (plugin.MainWindow.CurrentLayout == null && placeMode != UiPlaceMode.Test) return "Load a layout first.";
         if (Running) return "Already running.";
+        if (plugin.Lifter.Running) return "Finish heights is running.";
         return null;
     }
 
@@ -214,6 +220,8 @@ public sealed class UiPlacer
         offSpot.Clear();
         usedSpots.Clear();
         refusedSpots.Clear();
+        liftJobs.Clear();
+        pendingLift = null;
         pendingLanding = null;
         lastProblem.Clear();
         noSpot.Clear();
@@ -482,6 +490,10 @@ public sealed class UiPlacer
             preview->SetRotation(rotation);
             sentSpot = spot;
             previewMoved = true;
+            // Standing on the floor under its layout spot: remember where it really belongs.
+            pendingLift = what.StartsWith("to the floor at its layout spot") && pendingNeed.HasPosition
+                ? new LiftJob(name, spot, pendingNeed.Position + new System.Numerics.Vector3(0, heightShift, 0), pendingNeed.Rotation)
+                : null;
             previewMovedUtc = DateTime.UtcNow;
             Log($"  {name}: moved the preview {what}, to ({spot.X:0.00}, {spot.Y:0.00}, {spot.Z:0.00}).");
             return;
@@ -580,6 +592,7 @@ public sealed class UiPlacer
             previousGameError = null;
             spotTries = 0;
             Log($"Placed {ItemName(selectedItem)}.");
+            if (pendingLift != null) { liftJobs.Add(pendingLift); pendingLift = null; }
             if (placingAtLayoutSpot)
             {
                 usedSpots.Add(SpotKey(sentSpot));

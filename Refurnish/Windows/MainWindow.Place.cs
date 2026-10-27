@@ -384,6 +384,8 @@ public sealed partial class MainWindow
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Copies both lists and the full activity log, to paste into the chat.");
         }
 
+        DrawFinishHeights(placer);
+
         if (!placer.Running && placer.NoSpotItems.Count > 0)
         {
             if (ImGui.TreeNodeEx($"Left in the storeroom: {placer.NoSpotItems.Count} (their layout spot couldn't be used)###uiNoSpot"))
@@ -423,6 +425,45 @@ public sealed partial class MainWindow
                 ImGui.BulletText($"{g.Count()}x {ItemName(g.Key.ItemId)}{dye}");
             }
         }
+    }
+
+    /// <summary>The last step of a full rebuild: lift or sink the items left on the floor into their spots.</summary>
+    private void DrawFinishHeights(UiPlacer placer)
+    {
+        var lifter = plugin.Lifter;
+        var jobs = placer.LiftJobs;
+        if (placer.Running || (jobs.Count == 0 && !lifter.Running && lifter.Summary == null && lifter.StopReason == null)) return;
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextColored(Warn, $"Finish heights ({jobs.Count} item{(jobs.Count == 1 ? "" : "s")} standing on the floor under their spot)");
+        ImGui.TextWrapped("The game only places floor furniture on the floor, so these are standing directly under (or over) their layout spot, "
+                          + "already facing the right way. Refurnish can lift or sink them into place itself, the same way ReMakePlace does: "
+                          + "switch the furnishing window to Rotate mode (the circular-arrow button), then press the button below.");
+
+        if (lifter.Running)
+        {
+            ImGui.ProgressBar(lifter.Total == 0 ? 0 : (float)(lifter.Done + lifter.Failed) / lifter.Total, new Vector2(-1, 0),
+                $"{lifter.Done + lifter.Failed} of {lifter.Total}");
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
+            if (ImGui.Button("STOP##lift", new Vector2(-1, 28))) lifter.Stop("Stopped by you.");
+            ImGui.PopStyleColor();
+        }
+        else
+        {
+            var problem = lifter.CanStart(selectedHouse);
+            ImGui.BeginDisabled(problem != null || jobs.Count == 0);
+            if (ImGui.Button($"Lift / sink {jobs.Count} item(s) into place##lift", new Vector2(280, 28)))
+                lifter.Start(selectedHouse, jobs);
+            ImGui.EndDisabled();
+            if (problem != null) ImGui.TextColored(Warn, problem);
+            ImGui.TextDisabled("Experimental. If anything goes wrong it stops, and ReMakePlace's Apply can still finish the job.");
+        }
+
+        if (!lifter.Running && lifter.StopReason != null) ImGui.TextColored(Bad, $"Stopped: {lifter.StopReason}");
+        else if (!lifter.Running && lifter.Summary != null) ImGui.TextColored(lifter.Failed > 0 ? Warn : Good, lifter.Summary);
+
+        foreach (var line in lifter.RecentLog(8)) ImGui.TextDisabled(line);
     }
 
     private void DrawPlacementTest()

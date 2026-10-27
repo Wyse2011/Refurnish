@@ -111,6 +111,21 @@ single-byte flags that turn off the "Unable to place item" check) and switches i
 as the run ends. If those flags can't be found after a game patch, the option does nothing and
 says so.
 
+**Finish heights (experimental):** the game only places floor furniture on the floor, so items
+like floating roofs or sunk pillars are placed standing under their spot. With the furnishing
+window in Rotate mode, **Lift / sink into place** moves each one to its exact spot the way
+ReMakePlace does: it selects the item with the game's own function, sets its position and rotation,
+and sets it down with the game's own function, checking each step. If anything goes wrong it
+stops, and ReMakePlace's Apply can still finish.
+
+## Acknowledgements for the housing editor
+
+Refurnish's own code uses a few facts about the game found by the ReMakePlace plugin
+(https://github.com/RemakePlace/plugin), the continuation of MakePlace by jawslouis: the byte
+patterns that locate the game's "select furniture", "place furniture" and "place anywhere" code,
+and where the housing editor keeps its mode and selected item. Thank you to everyone who keeps
+MakePlace alive. Refurnish is meant to be used alongside the MakePlace app and ReMakePlace.
+
 > An earlier version sent placement messages directly, which left the game client broken (hidden
 > UI, locked commands, crashes). That approach is switched off and isn't used.
 
