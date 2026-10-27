@@ -3,7 +3,7 @@
     "Author": "Wyse2011",
     "Name": "Refurnish",
     "InternalName": "Refurnish",
-    "AssemblyVersion": "0.7.4.0",
+    "AssemblyVersion": "0.7.5.0",
     "Punchline": "Plan housing layout swaps from MakePlace files.",
     "Description": "Load a MakePlace layout and see exactly which furnishings to keep, which to store, and which to pull from your inventory, retainers, house storerooms and FC chest.",
     "ApplicableVersion": "any",

@@ -75,6 +75,7 @@ public sealed class UiPlacer
     private readonly List<string> offSpot = new();            // placed at its spot, but landed somewhere slightly different
     private bool anywhereWasOn;
     private readonly HashSet<(int, int, int)> usedSpots = new();   // layout spots filled this run
+    private readonly HashSet<(int, int, int)> refusedSpots = new(); // layout spots the game refused this pass
     private (string Name, System.Numerics.Vector3 Spot, float Rotation, DateTime At)? pendingLanding;
     private static (int, int, int) SpotKey(System.Numerics.Vector3 v) =>
         ((int)MathF.Round(v.X * 100), (int)MathF.Round(v.Y * 100), (int)MathF.Round(v.Z * 100));
@@ -212,6 +213,7 @@ public sealed class UiPlacer
         nearbyReasons.Clear();
         offSpot.Clear();
         usedSpots.Clear();
+        refusedSpots.Clear();
         pendingLanding = null;
         lastProblem.Clear();
         noSpot.Clear();
@@ -374,7 +376,13 @@ public sealed class UiPlacer
             CloseAndNext(profile); // not needed by the layout
             return;
         }
-        var need = ChooseRequirement(resolved.Value.Need);
+        var (need, allRefused) = ChooseRequirement(resolved.Value.Need);
+        if (allRefused && EffectiveSpot == PlaceSpot.Layout)
+        {
+            Fail(key, $"{name}: the game already refused every free layout spot for it this pass; it'll be tried again later.", countsTowardStop: false);
+            if (step != Step.Idle) CloseAndNext(profile);
+            return;
+        }
 
         // Layout mode: put floor-standing items (tables, partitions, lofts) in first. Anything higher
         // usually sits on one of them, so it waits for the next pass. This isn't a failure.
@@ -612,7 +620,11 @@ public sealed class UiPlacer
         }
         spotTries = 0;
 
-        Fail(selected, $"{ItemName(selectedItem)}: {reason}.");
+        // A refused layout spot is expected for floating or sunk floor furniture: remember the spot so
+        // the next copy tries a different one, and don't count it as a malfunction.
+        var expectedRefusal = placingAtLayoutSpot && gameError != null;
+        if (expectedRefusal) refusedSpots.Add(SpotKey(sentSpot));
+        Fail(selected, $"{ItemName(selectedItem)}: {reason}.", countsTowardStop: !expectedRefusal);
         if (step == Step.Idle) return;
 
         // The same refusal twice in a row means it's the spot, not the item.
@@ -681,6 +693,7 @@ public sealed class UiPlacer
             Pass++;
             failedThisPass.Clear();
             deferred.Clear();
+            refusedSpots.Clear(); // what they rest on may be in place now, so try them again
             placedThisPass = 0;
             failuresInARow = 0;
             index = 0;
@@ -720,11 +733,16 @@ public sealed class UiPlacer
         Finish();
     }
 
-    private void Fail((int, int) key, string message)
+    /// <param name="countsTowardStop">
+    /// False for refusals that are expected in layout mode (floating or sunk floor furniture), so they
+    /// don't trigger the "something is wrong" stop. Real malfunctions still count.
+    /// </param>
+    private void Fail((int, int) key, string message, bool countsTowardStop = true)
     {
         failedThisPass.Add(key);
         lastProblem[key] = message;
         Log(message);
+        if (!countsTowardStop) return;
         if (++failuresInARow >= MaxFailuresInARow)
             Stop($"{MaxFailuresInARow} items in a row couldn't be placed, so something is wrong beyond a single item.");
     }
@@ -783,10 +801,11 @@ public sealed class UiPlacer
     /// sitting on yet (read live from the room) and that wasn't already filled this run, so copies
     /// don't all get sent to the same spot. Falls back to the planner's choice if every spot is taken.
     /// </summary>
-    private Layout.Requirement ChooseRequirement(Layout.Requirement planned)
+    private (Layout.Requirement Need, bool AllRefused) ChooseRequirement(Layout.Requirement planned)
     {
         var layout = plugin.MainWindow.CurrentLayout;
-        if (layout == null || !planned.HasPosition) return planned;
+        if (layout == null || !planned.HasPosition) return (planned, false);
+        var anyRefused = false;
 
         var furniture = LiveFurniture.Read()?.Values.Select(f => f.Position).ToList() ?? new List<System.Numerics.Vector3>();
         var shift = new System.Numerics.Vector3(0, heightShift, 0);
@@ -796,9 +815,10 @@ public sealed class UiPlacer
             var p = r.Position + shift;
             if (usedSpots.Contains(SpotKey(p))) continue;
             if (furniture.Any(f => System.Numerics.Vector3.Distance(f, p) < 0.05f)) continue;
-            return r;
+            if (refusedSpots.Contains(SpotKey(p))) { anyRefused = true; continue; }
+            return (r, false);
         }
-        return planned;
+        return (planned, anyRefused);
     }
 
     private static float Deg(float radians) => radians * 180f / MathF.PI;
