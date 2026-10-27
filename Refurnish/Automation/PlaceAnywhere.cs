@@ -15,12 +15,14 @@ namespace Refurnish.Automation;
 /// </summary>
 public sealed class PlaceAnywhere : IDisposable
 {
-    // Patterns and offsets from the MakePlace plugin (Memory.cs). They may need updating after a game patch.
-    private static readonly (string Name, string Pattern, int Offset)[] Spots =
+    // Patterns and offsets from the ReMakePlace plugin (Memory.cs, May 2026), the maintained
+    // continuation of MakePlace, with the older MakePlace pattern kept as a fallback. Each switch is
+    // tried newest pattern first. They may need updating after a game patch.
+    private static readonly (string Name, (string Pattern, int Offset)[] Candidates)[] Spots =
     {
-        ("place anywhere", "C6 ?? ?? ?? 00 00 00 8B FE 48 89", 6),
-        ("wall anywhere", "48 85 C0 74 ?? C6 87 ?? ?? 00 00 00", 11),
-        ("wall-mount anywhere", "c6 87 83 01 00 00 00 48 83 c4 ??", 6),
+        ("place anywhere", new[] { ("C6 83 ?? ?? ?? ?? ?? 0F 29 44 24", 6), ("C6 ?? ?? ?? 00 00 00 8B FE 48 89", 6) }),
+        ("wall anywhere", new[] { ("48 85 C0 74 ?? C6 87 ?? ?? 00 00 00", 11) }),
+        ("wall-mount anywhere", new[] { ("c6 87 83 01 00 00 00 48 83 c4 ??", 6) }),
     };
 
     private readonly List<(string Name, nint Address, byte Original)> applied = new();
@@ -34,14 +36,23 @@ public sealed class PlaceAnywhere : IDisposable
     {
         if (found != null) return true;
         var list = new List<(string, nint)>();
-        foreach (var (name, pattern, offset) in Spots)
+        foreach (var (name, candidates) in Spots)
         {
-            if (!Plugin.SigScanner.TryScanText(pattern, out var addr) || addr == 0)
+            nint at = 0;
+            foreach (var (pattern, offset) in candidates)
+            {
+                if (Plugin.SigScanner.TryScanText(pattern, out var addr) && addr != 0)
+                {
+                    at = addr + offset;
+                    break;
+                }
+            }
+            if (at == 0)
             {
                 Error = $"Couldn't find the game's \"{name}\" switch (the game may have been patched). Place anywhere is unavailable.";
                 return false;
             }
-            list.Add((name, addr + offset));
+            list.Add((name, at));
         }
         found = list;
         return true;
