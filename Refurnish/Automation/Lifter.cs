@@ -29,6 +29,8 @@ public sealed unsafe class Lifter
     private static readonly TimeSpan VerifyWait = TimeSpan.FromSeconds(0.6);
     private const int MaxFailuresInARow = 5;
     private const float Match = 0.05f;
+    private const int TransformPositionOffset = 0x50;
+    private const int TransformRotationOffset = 0x60;
 
     private readonly Plugin plugin;
     private readonly List<LiftJob> jobs = new();
@@ -147,9 +149,13 @@ public sealed unsafe class Lifter
             return;
         }
 
-        var sg = (FFXIVClientStructs.FFXIV.Client.LayoutEngine.Group.SharedGroupLayoutInstance*)instance;
-        sg->Transform.Position = job.To;
-        sg->Transform.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, job.Rotation);
+        // The item's transform inside its layout object: position (3 floats) at 0x50, rotation
+        // (quaternion) at 0x60. Written by offset so it doesn't depend on field names, which differ
+        // between versions of FFXIVClientStructs.
+        var position = (Vector3*)(instance + TransformPositionOffset);
+        var rotation = (Quaternion*)(instance + TransformRotationOffset);
+        *position = job.To;
+        *rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, job.Rotation);
         if (!plugin.Editor.Place(instance)) { Stop("Couldn't set the furniture down."); return; }
 
         step = Step.Verify;
