@@ -69,6 +69,36 @@ public sealed class UiPlacer
     private readonly HashSet<(int, int)> deferred = new();   // higher items held back until the floor items are in
     private int placedThisPass;
     private PlaceSpot? spotOverride;                          // set for the final "place the rest nearby" pass
+    private Dictionary<int, LiveFurniture.Entry> furnitureBeforePlace = new();
+    private bool placingAtLayoutSpot;
+    private readonly List<string> nearbyReasons = new();      // why each item went near you instead
+    private readonly List<string> offSpot = new();            // placed at its spot, but landed somewhere slightly different
+    private bool anywhereWasOn;
+
+    /// <summary>Items that went near you instead of their spot, with the reason (last run).</summary>
+    public IReadOnlyList<string> NearbyReasons => nearbyReasons;
+
+    /// <summary>Items placed at their layout spot that landed somewhere measurably different (last run).</summary>
+    public IReadOnlyList<string> OffSpot => offSpot;
+
+    /// <summary>A plain-text report of the last run, for pasting.</summary>
+    public string Report()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Refurnish {Plugin.Version} placing report. Spot mode: {plugin.Configuration.UiPlaceSpot}. "
+                      + $"Place anywhere: {(anywhereWasOn ? "on" : "off")}. Height shift: {heightShift:0.00}.");
+        sb.AppendLine(Summary ?? StopReason ?? "(not finished)");
+        sb.AppendLine();
+        sb.AppendLine($"Placed near you instead ({nearbyReasons.Count}):");
+        foreach (var l in nearbyReasons) sb.AppendLine("  " + l);
+        sb.AppendLine();
+        sb.AppendLine($"Placed at its spot but landed differently ({offSpot.Count}):");
+        foreach (var l in offSpot) sb.AppendLine("  " + l);
+        sb.AppendLine();
+        sb.AppendLine("Activity:");
+        foreach (var l in log) sb.AppendLine("  " + l);
+        return sb.ToString();
+    }
 
     /// <summary>The spot mode in use right now (the final fallback pass places near you).</summary>
     private PlaceSpot EffectiveSpot => spotOverride ?? plugin.Configuration.UiPlaceSpot;
@@ -175,6 +205,8 @@ public sealed class UiPlacer
         placedThisPass = 0;
         spotOverride = null;
         PlacedNearby = 0;
+        nearbyReasons.Clear();
+        offSpot.Clear();
         lastProblem.Clear();
         noSpot.Clear();
         noSpotItems.Clear();
@@ -190,6 +222,7 @@ public sealed class UiPlacer
         nearMeCount = 0;
         heightShift = plugin.MainWindow.LayoutHeightShift();
         if (heightShift != 0) Log($"Layout heights shifted by {heightShift:+0.00;-0.00} to match this floor.");
+        anywhereWasOn = plugin.Anywhere.Active;
         if (plugin.Anywhere.Active) Log("Place anywhere is on for this run; it switches back off when the run ends.");
         badCells.Clear();
         spotTries = 0;
@@ -456,6 +489,8 @@ public sealed class UiPlacer
         sentSpot = at;
 
         placedCountBefore = LiveInventory.CountItem(LiveInventory.InteriorPlaced, selectedItem);
+        furnitureBeforePlace = LiveFurniture.Read() ?? new Dictionary<int, LiveFurniture.Entry>();
+        placingAtLayoutSpot = spotMode == PlaceSpot.Layout && previewMoved;
         gameError = null;
         diagnosticLogged = false;
         if (!CallbackTap.Fire(profile.MenuAddon, profile.PlaceValues, profile.PlaceClose))
@@ -528,6 +563,7 @@ public sealed class UiPlacer
             previousGameError = null;
             spotTries = 0;
             Log($"Placed {ItemName(selectedItem)}.");
+            if (placingAtLayoutSpot) CheckLanding();
             if (mode == UiPlaceMode.One) { Finish(); return; }
             // The list shifts up after an item leaves, so the same position now holds the next item.
             step = Step.Ready;
@@ -647,6 +683,9 @@ public sealed class UiPlacer
             && plugin.Configuration.LayoutFallbackNearMe && leftovers > 0)
         {
             Log($"{leftovers} item(s) couldn't go straight to their spot. Placing them near you so MakePlace can move them into position.");
+            foreach (var key in failedThisPass)
+                nearbyReasons.Add(lastProblem.TryGetValue(key, out var why) ? why : $"storeroom slot {key.Item1}/{key.Item2}: no reason recorded");
+            nearbyReasons.AddRange(noSpotItems);
             spotOverride = PlaceSpot.NearMe;
             Pass++;
             failedThisPass.Clear();
@@ -691,6 +730,33 @@ public sealed class UiPlacer
             : (FinalFailures > 0 ? $"Done. Placed {Placed}; {FinalFailures} couldn't be placed (see the log)." : $"Done. Placed {Placed}.") + nearby + leftover;
         Log(Summary);
     }
+
+    /// <summary>Compares where the item really landed with its layout spot, and records any difference.</summary>
+    private void CheckLanding()
+    {
+        var now = LiveFurniture.Read();
+        if (now == null) return;
+        var added = LiveFurniture.New(furnitureBeforePlace, now);
+        var name = ItemName(selectedItem);
+        if (added.Count == 0)
+        {
+            offSpot.Add($"{name}: placed, but couldn't find it in the room's furniture list to check where it landed.");
+            return;
+        }
+        var landed = added.OrderBy(a => System.Numerics.Vector3.Distance(a.Position, sentSpot)).First();
+        var dist = System.Numerics.Vector3.Distance(landed.Position, sentSpot);
+        var turn = LiveFurniture.AngleDiff(landed.Rotation, pendingNeed.Rotation);
+        if (dist > 0.02f || turn > 0.02f)
+        {
+            var line = $"{name}: wanted ({sentSpot.X:0.000}, {sentSpot.Y:0.000}, {sentSpot.Z:0.000}) facing {Deg(pendingNeed.Rotation):0.0}°, "
+                       + $"landed ({landed.Position.X:0.000}, {landed.Position.Y:0.000}, {landed.Position.Z:0.000}) facing {Deg(landed.Rotation):0.0}° "
+                       + $"(off by {dist:0.000} and {Deg(turn):0.0}°)";
+            offSpot.Add(line);
+            Log("  " + line);
+        }
+    }
+
+    private static float Deg(float radians) => radians * 180f / MathF.PI;
 
     /// <summary>Leaves an item in the storeroom because its layout spot can't be used. Not a malfunction, so it doesn't count toward stopping.</summary>
     private void SkipNoSpot(string name, string why)
@@ -793,7 +859,7 @@ public sealed class UiPlacer
     private void Log(string line)
     {
         log.Add($"{DateTime.Now:HH:mm:ss} {line}");
-        if (log.Count > 200) log.RemoveAt(0);
+        if (log.Count > 2000) log.RemoveAt(0);
     }
 
     private static string ItemName(uint id) =>

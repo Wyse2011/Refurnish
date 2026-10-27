@@ -368,6 +368,22 @@ public sealed partial class MainWindow
         if (placer.StopReason != null && !placer.Running) ImGui.TextColored(Bad, $"Stopped: {placer.StopReason}");
         else if (placer.Summary != null && !placer.Running) ImGui.TextColored(placer.FinalFailures > 0 ? Warn : Good, placer.Summary);
 
+        if (!placer.Running && (placer.NearbyReasons.Count > 0 || placer.OffSpot.Count > 0 || placer.Placed > 0))
+        {
+            if (placer.NearbyReasons.Count > 0 && ImGui.TreeNodeEx($"Placed near you instead: {placer.NearbyReasons.Count} (why)###uiNearbyWhy"))
+            {
+                foreach (var line in placer.NearbyReasons) ImGui.BulletText(line);
+                ImGui.TreePop();
+            }
+            if (placer.OffSpot.Count > 0 && ImGui.TreeNodeEx($"Placed at its spot but landed differently: {placer.OffSpot.Count}###uiOffSpot"))
+            {
+                foreach (var line in placer.OffSpot) ImGui.BulletText(line);
+                ImGui.TreePop();
+            }
+            if (ImGui.SmallButton("Copy report##uiReport")) ImGui.SetClipboardText(placer.Report());
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Copies both lists and the full activity log, to paste into the chat.");
+        }
+
         if (!placer.Running && placer.NoSpotItems.Count > 0)
         {
             if (ImGui.TreeNodeEx($"Left in the storeroom: {placer.NoSpotItems.Count} (their layout spot couldn't be used)###uiNoSpot"))
